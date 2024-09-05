@@ -33,6 +33,7 @@ class WeatherScreenState extends State<WeatherScreen> {
   void initState() {
     super.initState();
     _initializeWeather();
+    // _loadTemperatureUnit();
     // _loadCountryNames();
   }
 
@@ -156,6 +157,14 @@ class WeatherScreenState extends State<WeatherScreen> {
     }
   }
 
+  double convertTemperature(double tempK, bool isCelsius) {
+    if (isCelsius) {
+      return tempK - 273.15;
+    } else {
+      return (tempK - 273.15) * 9 / 5 + 32;
+    }
+  }
+
   void selectCity(String selectedCity) {
     setState(() {
       cityName = selectedCity; // selectedCity already includes the country
@@ -172,10 +181,7 @@ class WeatherScreenState extends State<WeatherScreen> {
         primary: Colors.blue,
         secondary: Colors.orange, // This replaces the accentColor
       ),
-      appBarTheme: AppBarTheme(
-        backgroundColor: Colors.transparent,
-        foregroundColor: Colors.black, // Text color
-      ),
+
       // Add more customizations as needed
     );
   }
@@ -186,10 +192,7 @@ class WeatherScreenState extends State<WeatherScreen> {
         primary: Colors.orange,
         secondary: Colors.deepOrange, // This replaces the accentColor
       ),
-      appBarTheme: AppBarTheme(
-        backgroundColor: Colors.transparent,
-        foregroundColor: Colors.white, // Text color
-      ),
+
       // Add more customizations as needed
     );
   }
@@ -244,116 +247,114 @@ class WeatherScreenState extends State<WeatherScreen> {
       debugShowCheckedModeBanner: false,
       theme: _isDarkMode ? _darkTheme : _lightTheme,
       home: Scaffold(
-        appBar: AppBar(
-          actions: [
-            _isSearching
-                ? Expanded(
-                    child: TextField(
-                      controller: _searchController,
-                      autofocus: true,
-                      style: TextStyle(color: Colors.white),
-                      decoration: InputDecoration(
-                        suffixIcon: IconButton(
-                          icon: Icon(_isSearching ? Icons.close : Icons.search,
-                              color: Colors.white),
-                          onPressed: () {
-                            setState(() {
-                              _isSearching = !_isSearching;
-                              if (!_isSearching) {
-                                _searchController.clear();
-                                searchResults = [];
-                                _initializeWeather();
-                              }
-                            });
-                          },
-                        ),
-                        hintText: 'Search for a city...',
-                        hintStyle: TextStyle(color: Colors.white60),
-                        border: InputBorder.none,
-                      ),
-                      onChanged: (value) {
-                        searchLocation(value);
-                      },
-                    ),
-                  )
-                : Row(
-                    children: [
-                      Padding(
-                        padding: const EdgeInsets.only(top: 5.0, left: 8.0),
-                        child: CustomPopupMenuButton(
-                          isDarkMode: _isDarkMode,
-                          onSelected: _handleMenuSelection,
-                        ),
-                      ),
-
-                      // Spacer to push the theme toggle container to the right
-                      SizedBox(
-                        width: 292,
-                      ),
-
-                      // Theme toggle container aligned to the right
-                      Padding(
-                        padding: const EdgeInsets.only(top: 5.0, right: 8.0),
-                        child: Container(
-                          width: 30, // Adjust width as needed
-                          height: 60, // Adjust height as needed
-                          decoration: BoxDecoration(
-                            boxShadow: [
-                              BoxShadow(
-                                color: _isDarkMode
-                                    ? Colors.grey.withOpacity(0.2)
-                                    : Colors.black.withOpacity(0.2),
-                                spreadRadius: 5,
-                                blurRadius: 7,
-                                offset: Offset(0, 7),
-                              ),
-                            ],
-                            color: _isDarkMode ? Colors.black : Colors.white,
-                            border: Border.all(
-                              color: _isDarkMode ? Colors.black : Colors.white,
-                              width: 2.0,
-                            ),
-                            borderRadius: BorderRadius.circular(25),
-                          ),
-                          child: Column(
-                            mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                            children: [
-                              GestureDetector(
-                                onTap: _isDarkMode ? _toggleTheme : null,
-                                child: AnimatedOpacity(
-                                  opacity: _isDarkMode ? 1.0 : 0.3,
-                                  duration: Duration(milliseconds: 200),
-                                  child: Icon(
-                                    Icons.sunny,
-                                    color: Colors.orange,
-                                    size: 20,
-                                  ),
-                                ),
-                              ),
-                              GestureDetector(
-                                onTap: _isDarkMode ? null : _toggleTheme,
-                                child: AnimatedOpacity(
-                                  opacity: _isDarkMode ? 0.3 : 1.0,
-                                  duration: Duration(milliseconds: 200),
-                                  child: Icon(
-                                    Icons.dark_mode,
-                                    color: const Color.fromARGB(
-                                        255, 105, 106, 107),
-                                    size: 20,
-                                  ),
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-          ],
-        ),
+        backgroundColor: const Color.fromARGB(255, 13, 14, 17),
         body: SafeArea(
           child: Column(
             children: [
+              _isSearching
+                  ? Padding(
+                      padding: const EdgeInsets.all(12.0),
+                      child: TextField(
+                        controller: _searchController,
+                        autofocus: true,
+                        style: TextStyle(
+                            color: _isDarkMode ? Colors.white : Colors.black),
+                        decoration: InputDecoration(
+                          suffixIcon: IconButton(
+                            icon: Icon(
+                                _isSearching ? Icons.close : Icons.search,
+                                color:
+                                    _isDarkMode ? Colors.white : Colors.black),
+                            onPressed: () {
+                              setState(() {
+                                _isSearching = !_isSearching;
+                                if (!_isSearching) {
+                                  _searchController.clear();
+                                  searchResults = [];
+                                  // _initializeWeather(); // If needed
+                                }
+                              });
+                            },
+                          ),
+                          hintText: 'Search for a city...',
+                          hintStyle: TextStyle(
+                              color:
+                                  _isDarkMode ? Colors.white60 : Colors.black),
+                          border: InputBorder.none,
+                        ),
+                        onChanged: (value) {
+                          searchLocation(value);
+                        },
+                      ),
+                    )
+                  : Row(
+                      children: [
+                        Padding(
+                          padding: const EdgeInsets.only(top: 5.0, left: 8.0),
+                          child: CustomPopupMenuButton(
+                            isDarkMode: _isDarkMode,
+                            onSelected: _handleMenuSelection,
+                          ),
+                        ),
+                        Spacer(), // Pushes the theme toggle container to the right
+                        Padding(
+                          padding: const EdgeInsets.only(top: 5.0, right: 8.0),
+                          child: Container(
+                            width: 30, // Adjust width as needed
+                            height: 60, // Adjust height as needed
+                            decoration: BoxDecoration(
+                              boxShadow: [
+                                BoxShadow(
+                                  color: _isDarkMode
+                                      ? Colors.grey.withOpacity(0.2)
+                                      : Colors.black.withOpacity(0.2),
+                                  spreadRadius: 5,
+                                  blurRadius: 7,
+                                  offset: Offset(0, 7),
+                                ),
+                              ],
+                              color: _isDarkMode ? Colors.black : Colors.white,
+                              border: Border.all(
+                                color:
+                                    _isDarkMode ? Colors.black : Colors.white,
+                                width: 2.0,
+                              ),
+                              borderRadius: BorderRadius.circular(25),
+                            ),
+                            child: Column(
+                              mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                              children: [
+                                GestureDetector(
+                                  onTap: _isDarkMode ? _toggleTheme : null,
+                                  child: AnimatedOpacity(
+                                    opacity: _isDarkMode ? 1.0 : 0.3,
+                                    duration: Duration(milliseconds: 200),
+                                    child: Icon(
+                                      Icons.sunny,
+                                      color: Colors.orange,
+                                      size: 20,
+                                    ),
+                                  ),
+                                ),
+                                GestureDetector(
+                                  onTap: _isDarkMode ? null : _toggleTheme,
+                                  child: AnimatedOpacity(
+                                    opacity: _isDarkMode ? 0.3 : 1.0,
+                                    duration: Duration(milliseconds: 200),
+                                    child: Icon(
+                                      Icons.dark_mode,
+                                      color: const Color.fromARGB(
+                                          255, 105, 106, 107),
+                                      size: 20,
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
               if (_isSearching && searchResults.isNotEmpty)
                 Expanded(
                   child: ListView.builder(
@@ -391,104 +392,101 @@ class WeatherScreenState extends State<WeatherScreen> {
                       if (currentWeatherData == null) {
                         return Center(child: Text('No weather data available'));
                       }
-
+                      final tempK = currentWeatherData['main']['temp'];
                       final currentTemp =
-                          (currentWeatherData['main']['temp'] - 273.15).round();
+                          convertTemperature(tempK, _isCelsius).round();
                       final weatherDescription =
                           currentWeatherData['weather'][0]['description'];
 
                       return Padding(
                         padding: const EdgeInsets.all(16.0),
-                        child: Container(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.center,
-                            children: [
-                              SizedBox(height: 20),
-                              Text(
-                                cityName,
-                                style: TextStyle(fontSize: 20),
-                              ),
-                              SizedBox(height: 60),
-                              BoxedIcon(
-                                _getWeatherIcon(
-                                    currentWeatherData['weather'][0]['main']),
-                                size: 60, // You can adjust the size as needed
-                                color:
-                                    _isDarkMode ? Colors.white : Colors.black,
-                              ),
-                              Text(
-                                '$currentTemp°',
-                                style: TextStyle(
-                                    fontSize: 72, fontWeight: FontWeight.bold),
-                              ),
-                              SizedBox(height: 14),
-                              Text(
-                                weatherDescription,
-                                style: TextStyle(fontSize: 18),
-                              ),
-                              SizedBox(height: 40),
-                              Text(
-                                'Wind:',
-                                style: TextStyle(fontSize: 16),
-                              ),
-                              Text(
-                                '${currentWeatherData['wind']['speed']} m/s',
-                                style: TextStyle(fontSize: 16),
-                              ),
-                              SizedBox(height: 130),
-                              Row(
-                                mainAxisAlignment: MainAxisAlignment.center,
-                                children: List.generate(
-                                  min(
-                                      5,
-                                      (list.length / 8)
-                                          .floor()), // Show the next 5 days
-                                  (index) {
-                                    final int calculatedIndex =
-                                        (index + 1) * 8; // Start from tomorrow
-                                    if (calculatedIndex >= list.length) {
-                                      return Container(); // Return an empty container if the index is out of bounds
-                                    }
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.center,
+                          children: [
+                            SizedBox(height: 20),
+                            Text(
+                              cityName,
+                              style: TextStyle(fontSize: 20),
+                            ),
+                            SizedBox(height: 60),
+                            BoxedIcon(
+                              _getWeatherIcon(
+                                  currentWeatherData['weather'][0]['main']),
+                              size: 60, // You can adjust the size as needed
+                              color: _isDarkMode ? Colors.white : Colors.black,
+                            ),
+                            Text(
+                              '$currentTemp° ${_isCelsius ? "C" : "F"}',
+                              style: TextStyle(
+                                  fontSize: 72, fontWeight: FontWeight.bold),
+                            ),
+                            SizedBox(height: 14),
+                            Text(
+                              weatherDescription,
+                              style: TextStyle(fontSize: 18),
+                            ),
+                            SizedBox(height: 40),
+                            Text(
+                              'Wind:',
+                              style: TextStyle(fontSize: 16),
+                            ),
+                            Text(
+                              '${currentWeatherData['wind']['speed']} m/s',
+                              style: TextStyle(fontSize: 16),
+                            ),
+                            SizedBox(height: 130),
+                            Row(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: List.generate(
+                                min(
+                                    5,
+                                    (list.length / 8)
+                                        .floor()), // Show the next 5 days
+                                (index) {
+                                  final int calculatedIndex =
+                                      (index + 1) * 8; // Start from tomorrow
+                                  if (calculatedIndex >= list.length) {
+                                    return Container(); // Return an empty container if the index is out of bounds
+                                  }
 
-                                    final futureWeather = list[calculatedIndex];
-                                    final temp =
-                                        (futureWeather['main']['temp'] - 273.15)
-                                            .round();
-                                    final date =
-                                        DateTime.fromMillisecondsSinceEpoch(
-                                            futureWeather['dt'] * 1000);
+                                  final futureWeather = list[calculatedIndex];
+                                  final temp =
+                                      (futureWeather['main']['temp'] - 273.15)
+                                          .round();
+                                  final date =
+                                      DateTime.fromMillisecondsSinceEpoch(
+                                          futureWeather['dt'] * 1000);
 
-                                    return Padding(
-                                      padding: const EdgeInsets.all(13.0),
-                                      child: Column(
-                                        children: [
-                                          BoxedIcon(
-                                            _getWeatherIcon(
-                                                futureWeather['weather'][0]
-                                                    ['main']),
-                                            size: 30,
-                                            color: _isDarkMode
-                                                ? Colors.white
-                                                : Colors.black,
-                                          ),
-                                          Text(
-                                            '$temp°',
-                                            style: TextStyle(
-                                                fontSize: 18,
-                                                fontWeight: FontWeight.bold),
-                                          ),
-                                          Text(
-                                            DateFormat('E').format(date),
-                                            style: TextStyle(fontSize: 14),
-                                          ),
-                                        ],
-                                      ),
-                                    );
-                                  },
-                                ),
+                                  return Padding(
+                                    padding: const EdgeInsets.all(13.0),
+                                    child: Column(
+                                      children: [
+                                        BoxedIcon(
+                                          _getWeatherIcon(
+                                              futureWeather['weather'][0]
+                                                  ['main']),
+                                          size: 30,
+                                          color: _isDarkMode
+                                              ? Colors.white
+                                              : Colors.black,
+                                        ),
+                                        Text(
+                                          '$temp°',
+                                          style: TextStyle(
+                                              fontSize: 18,
+                                              fontWeight: FontWeight.bold),
+                                        ),
+                                        Text(
+                                          DateFormat('E').format(date),
+                                          style: TextStyle(fontSize: 14),
+                                        ),
+                                      ],
+                                    ),
+                                  );
+                                },
                               ),
-                            ],
-                          ),
+                            )
+                          ],
                         ),
                       );
                     },
