@@ -7,77 +7,98 @@ class WelcomePage extends StatefulWidget {
   const WelcomePage({Key? key}) : super(key: key);
 
   @override
-  State<WelcomePage> createState() => WelcomePageState();
+  State createState() => WelcomePageState();
 }
 
-class WelcomePageState extends State<WelcomePage> {
+class WelcomePageState extends State<WelcomePage>
+    with SingleTickerProviderStateMixin {
   bool isLoading = true;
-  late String username = ''; // Track loading state
+  late String username = '';
+  late AnimationController _controller;
+  late Animation<double> _opacityAnimation;
 
   @override
   void initState() {
     super.initState();
+    _controller = AnimationController(
+      duration: const Duration(seconds: 2),
+      vsync: this,
+    );
+    _opacityAnimation =
+        Tween<double>(begin: 0.0, end: 1.0).animate(_controller);
     _getUserData();
   }
 
-  Future<void> _getUserData() async {
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  Future _getUserData() async {
     SharedPreferences prefs = await SharedPreferences.getInstance();
-    // Retrieve the username from SharedPreferences
     setState(() {
-      username = prefs.getString('username') ?? ''; // Get the stored username
+      username = prefs.getString('username') ?? '';
     });
-    // Simulate a delay
-    Future.delayed(const Duration(seconds: 2), () {
-      // Navigate to the next screen
-      Navigator.pushReplacement(
-        context,
-        MaterialPageRoute(builder: (context) => const WeatherScreen()),
-      );
-    }).then((value) {
-      // After the delay, set loading to false
-      setState(() {
-        isLoading = false;
-      });
-    });
+    _controller.forward();
+    await Future.delayed(const Duration(seconds: 3));
+    Navigator.pushReplacement(
+      context,
+      MaterialPageRoute(builder: (context) => const WeatherScreen()),
+    );
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      body: Stack(
-        children: [
-          Container(
-            decoration: BoxDecoration(
-              // color: Colo,
-              image: DecorationImage(
-                fit: BoxFit.fill,
-                image: AssetImage(
-                    'assets/images/white.jpg'), // Set your background image
-              ),
-            ),
+      body: Container(
+        decoration: BoxDecoration(
+          gradient: LinearGradient(
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+            colors: [Colors.blue.shade300, Colors.blue.shade800],
           ),
-          Padding(
-            padding: const EdgeInsets.only(
-              top: 700,
-            ),
-            child: Align(
-              alignment: Alignment.topCenter,
-              child: AnimatedSwitcher(
-                duration: Duration(seconds: 1),
-                child: isLoading
-                    ? Text(
-                        'Welcome! $username',
-                        style: TextStyle(
-                          fontSize: 24.0,
-                          fontWeight: FontWeight.bold,
-                          color: Colors.black,
-                        ),
-                      )
-                    : SizedBox(), // Hide the text after 5 seconds
+        ),
+        child: Center(
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(
+                Icons.cloud,
+                size: 100,
+                color: Colors.white,
               ),
-            ),
+              SizedBox(height: 30),
+              FadeTransition(
+                opacity: _opacityAnimation,
+                child: Text(
+                  'Welcome back,',
+                  style: TextStyle(
+                    fontSize: 28,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.white,
+                  ),
+                ),
+              ),
+              SizedBox(height: 10),
+              FadeTransition(
+                opacity: _opacityAnimation,
+                child: Text(
+                  username,
+                  style: TextStyle(
+                    fontSize: 32,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.white,
+                  ),
+                ),
+              ),
+              SizedBox(height: 50),
+              CircularProgressIndicator(
+                valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+              ),
+            ],
           ),
-        ],
+        ),
       ),
     );
   }
