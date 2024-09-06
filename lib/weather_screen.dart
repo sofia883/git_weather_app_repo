@@ -39,11 +39,12 @@ class WeatherScreenState extends State<WeatherScreen> {
   @override
   void initState() {
     super.initState();
-    if (widget.location != null) {
-      _initializeWeatherForLocation(widget.location!);
-    } else {
-      _initializeWeather();
-    }
+    // if (widget.location != null) {
+    //   _initializeWeatherForLocation(widget.location!);
+    // } else {
+    //   _initializeWeather();
+    // }
+    _loadSavedLocationAndWeather();
   }
 
   @override
@@ -53,28 +54,42 @@ class WeatherScreenState extends State<WeatherScreen> {
   }
 
   Future<void> _initializeWeather() async {
-    if (mounted) {
-      setState(() {
-        isLoading = true;
-        errorMessage = '';
-      });
-    }
+    setState(() {
+      isLoading = true;
+      errorMessage = '';
+    });
     try {
       await _getCurrentLocation();
     } catch (e) {
       print("Error initializing weather: $e");
-      if (mounted) {
-        setState(() {
-          weather = getCurrentWeather('London');
-          cityName = 'London, United Kingdom';
-        });
-      }
+      setState(() {
+        weather = getCurrentWeather('London');
+        cityName = 'London, United Kingdom';
+      });
     } finally {
-      if (mounted) {
-        setState(() {
-          isLoading = false;
-        });
+      setState(() {
+        isLoading = false;
+      });
+    }
+  }
+
+  Future<void> _loadSavedLocationAndWeather() async {
+    SharedPreferences prefs = await SharedPreferences.getInstance();
+    String? savedLocation = prefs.getString('lastSelectedLocation');
+    bool? savedIsCelsius = prefs.getBool('isCelsius');
+
+    setState(() {
+      if (savedIsCelsius != null) {
+        _isCelsius = savedIsCelsius;
       }
+    });
+
+    if (savedLocation != null) {
+      _initializeWeatherForLocation(savedLocation);
+    } else if (widget.location != null) {
+      _initializeWeatherForLocation(widget.location!);
+    } else {
+      _initializeWeather();
     }
   }
 
@@ -100,255 +115,66 @@ class WeatherScreenState extends State<WeatherScreen> {
     }
   }
 
+  void _handleTemperatureUnitChanged(bool isCelsius) async {
+    setState(() {
+      _isCelsius = isCelsius;
+    });
+
+    SharedPreferences prefs = await SharedPreferences.getInstance();
+    await prefs.setBool('isCelsius', isCelsius);
+
+    // Reload weather for the current location
+    if (cityName != 'Current Location') {
+      _initializeWeatherForLocation(cityName);
+    } else {
+      _initializeWeather();
+    }
+  }
+
+  void selectCity(String selectedCity) async {
+    setState(() {
+      cityName = selectedCity;
+      weather = getCurrentWeather(selectedCity.split(',')[0]);
+      searchResults = [];
+      _isSearching = false;
+      _searchController.clear();
+    });
+    _showSaveLocationSnackbar(selectedCity);
+
+    // Save the selected location
+    SharedPreferences prefs = await SharedPreferences.getInstance();
+    await prefs.setString('lastSelectedLocation', selectedCity);
+  }
+
   Future<Map<String, dynamic>> getCurrentWeather(String city) async {
     try {
       final res = await http.get(
         Uri.parse(
-            'http://api.weatherapi.com/v1/forecast.json?key=$openWeatherAPIKey&q=$city&days=6&aqi=yes'),
+          'https://api.openweathermap.org/data/2.5/forecast?q=$city&APPID=$openWeatherAPIKey',
+        ),
       );
       if (res.statusCode != 200) {
         throw Exception('Failed to load weather data: ${res.statusCode}');
       }
       final data = jsonDecode(res.body);
-      print("API Response: $data"); // Debug print
-
-      if (data['location'] != null) {
-        setState(() {
-          String countryName = data['location']['country'] ?? 'Unknown Country';
-          String cityName = data['location']['name'] ?? 'Unknown City';
-          this.cityName = '$cityName, $countryName';
-        });
-        return data;
-      } else {
-        throw Exception('Invalid data structure in API response');
-      }
+      setState(() {
+        String countryCode = data['city']['country'];
+        String countryName = Country.tryParse(countryCode)?.name ?? countryCode;
+        cityName = '${data['city']['name']}, $countryName';
+      });
+      return data;
     } catch (e) {
       print("Error fetching weather: $e");
-      throw Exception('Failed to load weather data: $e');
+      throw Exception('Failed to load weather data');
     }
   }
 
-  Widget _buildCurrentWeather(Map<String, dynamic> currentWeather) {
-    final temp =
-        _isCelsius ? currentWeather['temp_c'] : currentWeather['temp_f'];
-    final weatherDescription = currentWeather['condition']['text'];
-
-    return Column(
-      children: [
-        BoxedIcon(
-          Methods.getWeatherIcon(weatherDescription),
-          size: 60,
-          color: _isDarkMode ? Colors.white : Colors.black,
-        ),
-        SizedBox(height: 10),
-        Container(
-          padding: EdgeInsets.all(16.0),
-          child: RichText(
-            text: TextSpan(
-              children: [
-                TextSpan(
-                  text: '$temp',
-                  style: TextStyle(
-                    fontSize: 50.0,
-                    fontWeight: FontWeight.bold,
-                    color: _isDarkMode ? Colors.white : Colors.black,
-                  ),
-                ),
-                WidgetSpan(
-                  child: Transform.translate(
-                    offset: Offset(0, -5.0),
-                    child: Text(
-                      '°${_isCelsius ? 'C' : 'F'}',
-                      style: TextStyle(
-                        fontSize: 30.0,
-                        color: _isDarkMode ? Colors.white70 : Colors.black54,
-                      ),
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ),
-        Text(weatherDescription, style: TextStyle(fontSize: 18)),
-        Text('Wind: ${currentWeather['wind_kph']} km/h',
-            style: TextStyle(fontSize: 16)),
-      ],
-    );
-  }
-
-  Widget _build6DayForecast(List<dynamic> forecast) {
-    return Column(
-      children: [
-        Text('6-Day Forecast',
-            style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-        SizedBox(height: 10),
-        SingleChildScrollView(
-          scrollDirection: Axis.horizontal,
-          child: Row(
-            children: forecast.map((day) => _buildDayForecast(day)).toList(),
-          ),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildDayForecast(Map<String, dynamic> day) {
-    final date = DateTime.parse(day['date']);
-    final temp = _isCelsius ? day['day']['avgtemp_c'] : day['day']['avgtemp_f'];
-    final weatherDescription = day['day']['condition']['text'];
-
-    print(
-        "Weather description for ${DateFormat('EEE').format(date)}: $weatherDescription"); // Add this debug print
-
-    return Padding(
-      padding: const EdgeInsets.all(8.0),
-      child: Column(
-        children: [
-          Text(DateFormat('EEE').format(date), style: TextStyle(fontSize: 16)),
-          SizedBox(height: 8),
-          BoxedIcon(
-            Methods.getWeatherIcon(weatherDescription),
-            size: 30,
-            color: _isDarkMode ? Colors.white : Colors.black,
-          ),
-          SizedBox(height: 8),
-          Text(
-            '$temp°${_isCelsius ? 'C' : 'F'}',
-            style: TextStyle(fontSize: 16),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildHourlyForecast(List<dynamic> hourlyForecast) {
-    return Column(
-      children: [
-        Text('Hourly Forecast',
-            style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-        SizedBox(height: 10),
-        SingleChildScrollView(
-          scrollDirection: Axis.horizontal,
-          child: Row(
-            children:
-                hourlyForecast.map((hour) => _buildHourForecast(hour)).toList(),
-          ),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildHourForecast(Map<String, dynamic> hour) {
-    final time = DateTime.parse(hour['time']);
-    final temp = _isCelsius ? hour['temp_c'] : hour['temp_f'];
-    final weatherDescription = hour['condition']['text'];
-
-    return Padding(
-      padding: const EdgeInsets.all(8.0),
-      child: Column(
-        children: [
-          Text(DateFormat('HH:mm').format(time),
-              style: TextStyle(fontSize: 14)),
-          SizedBox(height: 8),
-          BoxedIcon(
-            Methods.getWeatherIcon(weatherDescription),
-            size: 24,
-            color: _isDarkMode ? Colors.white : Colors.black,
-          ),
-          SizedBox(height: 8),
-          Text('$temp°${_isCelsius ? 'C' : 'F'}',
-              style: TextStyle(fontSize: 14)),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildSearchResults() {
-    return Expanded(
-      child: ListView.builder(
-        itemCount: searchResults.length,
-        itemBuilder: (context, index) {
-          return ListTile(
-            title: Text(searchResults[index]),
-            onTap: () => selectCity(searchResults[index]),
-          );
-        },
-      ),
-    );
-  }
-
-  Widget _buildWeatherContent() {
-    return Expanded(
-      child: FutureBuilder<Map<String, dynamic>>(
-        future: weather,
-        builder: (context, snapshot) {
-          if (snapshot.connectionState == ConnectionState.waiting) {
-            return Center(child: CircularProgressIndicator());
-          }
-          if (snapshot.hasError) {
-            return Center(child: Text('Error: ${snapshot.error}'));
-          }
-          if (!snapshot.hasData) {
-            return Center(child: Text('No data available'));
-          }
-
-          final data = snapshot.data!;
-          final currentWeather = data['current'];
-          final forecast = data['forecast']['forecastday'];
-
-          return SingleChildScrollView(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.center,
-              children: [
-                SizedBox(height: 20),
-                Text(cityName, style: TextStyle(fontSize: 20)),
-                SizedBox(height: 40),
-                _buildCurrentWeather(currentWeather),
-                SizedBox(height: 40),
-                _build6DayForecast(forecast),
-                SizedBox(height: 40),
-                _buildHourlyForecast(forecast[0]['hour']),
-              ],
-            ),
-          );
-        },
-      ),
-    );
-  }
-
-  // Widget _buildCurrentWeather(Map<String, dynamic> currentWeather) {
-  //   final temp =
-  //       _isCelsius ? currentWeather['temp_c'] : currentWeather['temp_f'];
-  //   final weatherDescription = currentWeather['condition']['text'];
-
-  //   return Column(
-  //     children: [
-  //       BoxedIcon(
-  //         Methods.getWeatherIcon(weatherDescription),
-  //         size: 60,
-  //         color: _isDarkMode ? Colors.white : Colors.black,
-  //       ),
-  //       SizedBox(height: 20),
-  //       Text(
-  //         '$temp°${_isCelsius ? 'C' : 'F'}',
-  //         style: TextStyle(fontSize: 50, fontWeight: FontWeight.bold),
-  //       ),
-  //       SizedBox(height: 10),
-  //       Text(weatherDescription, style: TextStyle(fontSize: 18)),
-  //       SizedBox(height: 20),
-  //       Text('Wind: ${currentWeather['wind_kph']} km/h',
-  //           style: TextStyle(fontSize: 16)),
-  //     ],
-  //   );
+  // void _handleTemperatureUnitChanged(bool isCelsius) {
+  //   setState(() {
+  //     _isCelsius = isCelsius;
+  //   });
+  //   _initializeWeather(); // Re-initialize weather to apply the unit change
   // }
-
-  void _handleTemperatureUnitChanged(bool isCelsius) {
-    setState(() {
-      _isCelsius = isCelsius;
-    });
-    _initializeWeather(); // Re-initialize weather to apply the unit change
-  }
 
   Future<void> searchLocation(String query) async {
     if (query.isEmpty) {
@@ -359,9 +185,10 @@ class WeatherScreenState extends State<WeatherScreen> {
     }
 
     try {
-      final response = await http.get(Uri.parse(
-        'https://api.weatherapi.com/v1/search.json?key=ec8fc561e90f4909824173618240509&q=$query',
-      ));
+      final response = await http.get(
+        Uri.parse(
+            'https://api.openweathermap.org/geo/1.0/direct?q=$query&limit=5&appid=$openWeatherAPIKey'),
+      );
       if (response.statusCode == 200) {
         List<dynamic> cities = json.decode(response.body);
         setState(() {
@@ -389,17 +216,6 @@ class WeatherScreenState extends State<WeatherScreen> {
     } else {
       return (tempK - 273.15) * 9 / 5 + 32;
     }
-  }
-
-  void selectCity(String selectedCity) {
-    setState(() {
-      cityName = selectedCity;
-      weather = getCurrentWeather(cityName.split(',')[0]);
-      searchResults = [];
-      _isSearching = false;
-      _searchController.clear();
-    });
-    _showSaveLocationSnackbar(selectedCity);
   }
 
   void _showSaveLocationSnackbar(String location) {
@@ -526,7 +342,8 @@ class WeatherScreenState extends State<WeatherScreen> {
     try {
       final res = await http.get(
         Uri.parse(
-            'http://api.weatherapi.com/v1/current.json?key=ec8fc561e90f4909824173618240509&q=India&aqi=yes'),
+          'https://api.openweathermap.org/data/2.5/forecast?lat=$lat&lon=$lon&APPID=$openWeatherAPIKey',
+        ),
       );
       if (res.statusCode != 200) {
         throw Exception('Failed to load weather data: ${res.statusCode}');
@@ -586,6 +403,7 @@ class WeatherScreenState extends State<WeatherScreen> {
           context,
           MaterialPageRoute(
               builder: (context) => SettingsPage(
+                    onLocationSelected: _handleLocationSelected,
                     onTemperatureUnitChanged: _handleTemperatureUnitChanged,
                   )),
         );
@@ -606,6 +424,64 @@ class WeatherScreenState extends State<WeatherScreen> {
     });
   }
 
+  Widget _buildHourlyForecast(List<dynamic> list) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Padding(
+          padding: const EdgeInsets.symmetric(vertical: 16.0),
+          child: Text(
+            'Hourly Forecast',
+            style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+          ),
+        ),
+        Container(
+          height: 120,
+          child: ListView.builder(
+            scrollDirection: Axis.horizontal,
+            itemCount: min(8, list.length), // Show next 24 hours (8 * 3 hours)
+            itemBuilder: (context, index) {
+              final hourlyWeather = list[index];
+              final temp =
+                  convertTemperature(hourlyWeather['main']['temp'], _isCelsius);
+              final time = DateTime.fromMillisecondsSinceEpoch(
+                  hourlyWeather['dt'] * 1000);
+              final weatherIcon =
+                  Methods.getWeatherIcon(hourlyWeather['weather'][0]['main']);
+
+              return Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 12.0),
+                child: Column(
+                  children: [
+                    Text(
+                      DateFormat('ha')
+                          .format(time), // Format as hour (e.g., 3PM)
+                      style: TextStyle(fontSize: 14),
+                    ),
+                    SizedBox(height: 8),
+                    BoxedIcon(
+                      weatherIcon,
+                      size: 30,
+                      color: _isDarkMode ? Colors.white : Colors.black,
+                    ),
+                    SizedBox(height: 8),
+                    Text(
+                      '${temp.round()}°',
+                      style: TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ],
+                ),
+              );
+            },
+          ),
+        ),
+      ],
+    );
+  }
+
   final GlobalKey<ScaffoldMessengerState> _scaffoldMessengerKey =
       GlobalKey<ScaffoldMessengerState>();
 
@@ -618,8 +494,9 @@ class WeatherScreenState extends State<WeatherScreen> {
       home: ScaffoldMessenger(
         key: _scaffoldMessengerKey,
         child: Scaffold(
-          backgroundColor:
-              _isDarkMode ? Color.fromARGB(255, 13, 14, 17) : Colors.white,
+          backgroundColor: _isDarkMode
+              ? Color.fromARGB(255, 25, 30, 45)
+              : const Color.fromARGB(255, 221, 217, 217),
           body: SafeArea(
             child: isLoading
                 ? Center(
@@ -815,37 +692,165 @@ class WeatherScreenState extends State<WeatherScreen> {
                                   }
 
                                   final data = snapshot.data!;
-                                  final currentWeather = data['current'];
-                                  final forecast =
-                                      data['forecast']['forecastday'] as List?;
+                                  final list = data['list'] as List;
+                                  final currentWeatherData =
+                                      list.isNotEmpty ? list[0] : null;
 
-                                  return SingleChildScrollView(
-                                    child: Column(
-                                      crossAxisAlignment:
-                                          CrossAxisAlignment.center,
-                                      children: [
-                                        Text(cityName,
-                                            style: TextStyle(fontSize: 20)),
-                                        SizedBox(height: 20),
-                                        if (currentWeather != null)
-                                          _buildCurrentWeather(currentWeather)
-                                        else
+                                  if (currentWeatherData == null) {
+                                    return Center(
+                                        child:
+                                            Text('No weather data available'));
+                                  }
+                                  final tempK =
+                                      currentWeatherData['main']['temp'];
+                                  final currentTemp =
+                                      convertTemperature(tempK, _isCelsius)
+                                          .round();
+                                  final weatherDescription =
+                                      currentWeatherData['weather'][0]
+                                          ['description'];
+
+                                  return Padding(
+                                    padding: const EdgeInsets.all(16.0),
+                                    child: SingleChildScrollView(
+                                      scrollDirection: Axis.vertical,
+                                      child: Column(
+                                        crossAxisAlignment:
+                                            CrossAxisAlignment.center,
+                                        children: [
+                                          // SizedBox(height: 20),
                                           Text(
-                                              'Current weather data unavailable'),
-                                        SizedBox(height: 20),
-                                        if (forecast != null &&
-                                            forecast.isNotEmpty)
-                                          _build6DayForecast(forecast)
-                                        else
-                                          Text('Forecast data unavailable'),
-                                        SizedBox(height: 20),
-                                        if (forecast != null &&
-                                            forecast.isNotEmpty)
-                                          _buildHourlyForecast(
-                                              forecast[0]['hour'])
-                                        else
-                                          Text('Hourly forecast unavailable'),
-                                      ],
+                                            cityName,
+                                            style: TextStyle(fontSize: 20),
+                                          ),
+                                          // SizedBox(height: 60),
+                                          BoxedIcon(
+                                            Methods.getWeatherIcon(
+                                                currentWeatherData['weather'][0]
+                                                    ['main']),
+                                            size:
+                                                60, // You can adjust the size as needed
+                                            color: _isDarkMode
+                                                ? Colors.white
+                                                : Colors.black,
+                                          ),
+                                          Container(
+                                            padding: EdgeInsets.all(16.0),
+                                            child: RichText(
+                                              text: TextSpan(
+                                                children: [
+                                                  TextSpan(
+                                                    text:
+                                                        '${currentTemp}', // Numeric part
+                                                    style: TextStyle(
+                                                      fontSize:
+                                                          50.0, // Large font size for the temperature
+                                                      fontWeight:
+                                                          FontWeight.bold,
+                                                      color: Colors.white,
+                                                    ),
+                                                  ),
+                                                  WidgetSpan(
+                                                    child: Transform.translate(
+                                                      offset: Offset(0,
+                                                          -5.0), // Adjust vertical offset to move "°C" up
+                                                      child: Text(
+                                                        '°${_isCelsius ? 'C' : 'F'}', // Temperature unit
+                                                        style: TextStyle(
+                                                          fontSize:
+                                                              30.0, // Smaller font size for the unit
+                                                          color: Colors.white70,
+                                                        ),
+                                                      ),
+                                                    ),
+                                                  ),
+                                                ],
+                                              ),
+                                            ),
+                                          ),
+                                          SizedBox(height: 14),
+                                          Text(
+                                            weatherDescription,
+                                            style: TextStyle(fontSize: 18),
+                                          ),
+                                          SizedBox(height: 40),
+                                          Text(
+                                            'Wind:',
+                                            style: TextStyle(fontSize: 16),
+                                          ),
+                                          Text(
+                                            '${currentWeatherData['wind']['speed']} m/s',
+                                            style: TextStyle(fontSize: 16),
+                                          ),
+                                          // SizedBox(height: 130),
+                                          // SizedBox(height: 20),
+                                          _buildHourlyForecast(list),
+                                          SizedBox(height: 20),
+                                          Row(
+                                            mainAxisAlignment:
+                                                MainAxisAlignment.center,
+                                            children: List.generate(
+                                              min(
+                                                  7,
+                                                  (list.length / 8)
+                                                      .floor()), // Show the next 7 days
+                                              (index) {
+                                                final int calculatedIndex =
+                                                    (index + 1) *
+                                                        8; // Start from tomorrow
+                                                if (calculatedIndex >=
+                                                    list.length) {
+                                                  return Container(); // Return an empty container if the index is out of bounds
+                                                }
+
+                                                final futureWeather =
+                                                    list[calculatedIndex];
+                                                final temp = (futureWeather[
+                                                            'main']['temp'] -
+                                                        273.15)
+                                                    .round(); // Convert temperature from Kelvin to Celsius
+                                                final date = DateTime
+                                                    .fromMillisecondsSinceEpoch(
+                                                        futureWeather['dt'] *
+                                                            1000);
+
+                                                return Padding(
+                                                  padding: const EdgeInsets.all(
+                                                      13.0),
+                                                  child: Column(
+                                                    children: [
+                                                      BoxedIcon(
+                                                        Methods.getWeatherIcon(
+                                                            futureWeather[
+                                                                    'weather']
+                                                                [0]['main']),
+                                                        size: 30,
+                                                        color: _isDarkMode
+                                                            ? Colors.white
+                                                            : Colors.black,
+                                                      ),
+                                                      Text(
+                                                        '$temp°',
+                                                        style: TextStyle(
+                                                          fontSize: 18,
+                                                          fontWeight:
+                                                              FontWeight.bold,
+                                                        ),
+                                                      ),
+                                                      Text(
+                                                        DateFormat('E')
+                                                            .format(date),
+                                                        style: TextStyle(
+                                                            fontSize: 14),
+                                                      ),
+                                                    ],
+                                                  ),
+                                                );
+                                              },
+                                            ),
+                                          )
+                                        ],
+                                      ),
                                     ),
                                   );
                                 },

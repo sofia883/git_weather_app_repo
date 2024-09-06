@@ -91,28 +91,38 @@ class Methods extends StatelessWidget {
     );
   }
 
-  static IconData getWeatherIcon(String mainCondition) {
-    switch (mainCondition.toLowerCase()) {
-      case 'clear':
-        return WeatherIcons.day_sunny;
-      case 'clouds':
-        return WeatherIcons.cloudy;
-      case 'rain':
-        return WeatherIcons.rain;
-      case 'drizzle':
-        return WeatherIcons.showers;
-      case 'thunderstorm':
-        return WeatherIcons.thunderstorm;
-      case 'snow':
-        return WeatherIcons.snow;
-      case 'mist':
-      case 'smoke':
-      case 'haze':
-      case 'dust':
-      case 'fog':
-        return WeatherIcons.fog;
-      default:
-        return WeatherIcons.day_sunny; // Default icon
-    }
+ static IconData getWeatherIcon(String mainCondition) {
+  print("Getting icon for condition: $mainCondition"); // Add this debug print
+  switch (mainCondition.toLowerCase()) {
+    case 'sunny':
+    case 'clear':
+      return WeatherIcons.day_sunny;
+    case 'partly cloudy':
+      return WeatherIcons.day_cloudy;
+    case 'cloudy':
+    case 'overcast':
+      return WeatherIcons.cloudy;
+    case 'rain':
+    case 'light rain':
+    case 'moderate rain':
+    case 'heavy rain':
+      return WeatherIcons.rain;
+    case 'drizzle':
+      return WeatherIcons.showers;
+    case 'thunderstorm':
+      return WeatherIcons.thunderstorm;
+    case 'snow':
+    case 'light snow':
+    case 'moderate snow':
+    case 'heavy snow':
+      return WeatherIcons.snow;
+    case 'mist':
+    case 'fog':
+    case 'haze':
+      return WeatherIcons.fog;
+    default:
+      print("Unhandled weather condition: $mainCondition"); // Add this debug print
+      return WeatherIcons.day_sunny; // Default icon
   }
+}
 }

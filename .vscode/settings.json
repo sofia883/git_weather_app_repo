@@ -1,3 +1,4 @@
 {
-    "emulator.emulatorPathWindows": "C:\\Users\\vasee\\.android\\sdk"
+    "emulator.emulatorPathWindows": "C:\\Users\\vasee\\.android\\sdk",
+    "openctx.enable": false
 }
