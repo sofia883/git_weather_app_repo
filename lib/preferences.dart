@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
-import 'package:weather_icons/weather_icons.dart';
+// import 'package:weather_icons/weather_icons.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'methods.dart';
+// import 'methods.dart';
 import 'weather_screen.dart';
+import 'notification_service.dart';
+
 class PreferencesPage extends StatefulWidget {
   final Function(String) onLocationSelected;
 
@@ -14,17 +16,61 @@ class PreferencesPage extends StatefulWidget {
 
 class _PreferencesPageState extends State<PreferencesPage> {
   List<String> _weatherConditions = [
-    'Sunny',
-    'Cloudy',
-    'Rain',
-    'Drizzle',
+    'Thunderstorm with light rain',
+    'Thunderstorm with rain',
+    'Thunderstorm with heavy rain',
+    'Light thunderstorm',
     'Thunderstorm',
+    'Heavy thunderstorm',
+    'Ragged thunderstorm',
+    'Thunderstorm with light drizzle',
+    'Thunderstorm with drizzle',
+    'Thunderstorm with heavy drizzle',
+    'Light intensity drizzle',
+    'Drizzle',
+    'Heavy intensity drizzle',
+    'Light intensity drizzle rain',
+    'Drizzle rain',
+    'Heavy intensity drizzle rain',
+    'Shower rain and drizzle',
+    'Heavy shower rain and drizzle',
+    'Shower drizzle',
+    'Light rain',
+    'Moderate rain',
+    'Heavy intensity rain',
+    'Very heavy rain',
+    'Extreme rain',
+    'Freezing rain',
+    'Light intensity shower rain',
+    'Shower rain',
+    'Heavy intensity shower rain',
+    'Ragged shower rain',
+    'Light snow',
     'Snow',
+    'Heavy snow',
+    'Sleet',
+    'Light shower sleet',
+    'Shower sleet',
+    'Light rain and snow',
+    'Rain and snow',
+    'Light shower snow',
+    'Shower snow',
+    'Heavy shower snow',
     'Mist',
     'Smoke',
     'Haze',
+    'Sand/dust whirls',
+    'Fog',
+    'Sand',
     'Dust',
-    'Fog'
+    'Volcanic ash',
+    'Squalls',
+    'Tornado',
+    'clear sky',
+    'Few clouds (11-25%)',
+    'Scattered clouds (25-50%)',
+    'Broken clouds (51-84%)',
+    'Overcast clouds (85-100%)'
   ];
   String? _selectedCondition;
   List<String> _savedPreferences = [];
@@ -36,6 +82,21 @@ class _PreferencesPageState extends State<PreferencesPage> {
     super.initState();
     _loadSavedPreferences();
     _loadSavedLocations();
+    NotificationService.initialize(); // Initialize notification service
+  }
+
+  void _addPreference(String condition) {
+    if (!_savedPreferences.contains(condition)) {
+      setState(() {
+        _savedPreferences.add(condition);
+        _savePreferences();
+      });
+      _showSaveConfirmationSnackbar();
+      NotificationService.checkAndNotify(
+          condition); // Call this method when a new preference is saved
+    } else {
+      _showDuplicatePreferenceSnackbar();
+    }
   }
 
   Future<void> _loadSavedLocations() async {
@@ -74,7 +135,7 @@ class _PreferencesPageState extends State<PreferencesPage> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-          Text(
+            Text(
               'Saved Locations:',
               style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
             ),
@@ -93,7 +154,8 @@ class _PreferencesPageState extends State<PreferencesPage> {
                                 Navigator.push(
                                   context,
                                   MaterialPageRoute(
-                                    builder: (context) => WeatherScreen(location: location),
+                                    builder: (context) =>
+                                        WeatherScreen(location: location),
                                   ),
                                 );
                               },
@@ -120,12 +182,10 @@ class _PreferencesPageState extends State<PreferencesPage> {
                         .map((condition) => Container(
                               margin: const EdgeInsets.only(bottom: 8.0),
                               decoration: BoxDecoration(
-                                color: Colors.grey[200],
+                                color: Colors.black,
                                 borderRadius: BorderRadius.circular(8.0),
                               ),
                               child: ListTile(
-                                leading:
-                                    Icon(Methods.getWeatherIcon(condition)),
                                 title: Text(condition),
                                 trailing: IconButton(
                                   icon: Icon(Icons.delete),
@@ -172,7 +232,6 @@ class _PreferencesPageState extends State<PreferencesPage> {
                   value: condition,
                   child: Row(
                     children: [
-                      Icon(Methods.getWeatherIcon(condition)),
                       SizedBox(width: 8),
                       Text(condition),
                       if (isSaved)
@@ -213,18 +272,6 @@ class _PreferencesPageState extends State<PreferencesPage> {
       return _savedPreferences;
     }
     return _savedPreferences.take(4).toList();
-  }
-
-  void _addPreference(String condition) {
-    if (!_savedPreferences.contains(condition)) {
-      setState(() {
-        _savedPreferences.add(condition);
-        _savePreferences();
-      });
-      _showSaveConfirmationSnackbar();
-    } else {
-      _showDuplicatePreferenceSnackbar();
-    }
   }
 
   void _confirmRemovePreference(String condition) {

@@ -13,9 +13,8 @@ import 'profile_page.dart';
 import 'methods.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:google_fonts/google_fonts.dart';
-import 'package:flutter_local_notifications/flutter_local_notifications.dart';
-import 'package:permission_handler/permission_handler.dart' as ph;
-
+import 'notification_service.dart';
+// import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 
 class WeatherScreen extends StatefulWidget {
   final String? location;
@@ -41,178 +40,15 @@ class WeatherScreenState extends State<WeatherScreen> {
   String errorMessage = '';
   List<String> _savedPreferences = []; // Add this line
   bool isCurrentLocation = false;
-bool isSearchBarVisible = false;
-
-  Map<String, dynamic>? weatherData;
-
+  String _currentDescription = '';
   @override
   void initState() {
     super.initState();
     _loadSavedPreferences().then((_) {
-      _initializeWeather(useCurrentLocation: false);
-    });
-  }
-   Future<void> _checkLocationPermission() async {
-    var status = await ph.Permission.location.status;
-    if (status.isGranted) {
-      await _getCurrentLocation();
-    } else if (status.isDenied) {
-      await _requestLocationPermission();
-    } else if (status.isPermanentlyDenied) {
-      _showPermanentlyDeniedDialog();
-    }
-  }
-
-  Future<void> _requestLocationPermission() async {
-    var status = await ph.Permission.location.request();
-    if (status.isGranted) {
-      await _getCurrentLocation();
-    } else {
-      _showLocationDeniedDialog();
-    }
-  }
-
-  Future<void> _getCurrentLocation() async {
-    try {
-      Position position = await Geolocator.getCurrentPosition(
-          desiredAccuracy: LocationAccuracy.high);
-      await _fetchWeatherData(position.latitude, position.longitude);
-    } catch (e) {
-      print("Error getting location: $e");
-      _showLocationErrorSnackbar();
-    }
-  }
-
-  Future<void> _fetchWeatherData(double lat, double lon) async {
-    try {
-      final response = await http.get(Uri.parse(
-          'https://api.openweathermap.org/data/2.5/weather?lat=$lat&lon=$lon&appid=$openWeatherAPIKey&units=metric'));
-      
-      if (response.statusCode == 200) {
-        setState(() {
-          weatherData = json.decode(response.body);
-          isLoading = false;
-        });
-      } else {
-        throw Exception('Failed to load weather data');
-      }
-    } catch (e) {
-      setState(() {
-        errorMessage = 'Failed to fetch weather data: $e';
-        isLoading = false;
-      });
-    }
-  }
-
-  void _showLocationDeniedDialog() {
-    showDialog(
-      context: context,
-      builder: (BuildContext context) {
-        return AlertDialog(
-          title: Text('Location Access Required'),
-          content: Text('Please allow location access to get weather information for your current location.'),
-          actions: <Widget>[
-            TextButton(
-              child: Text('Cancel'),
-              onPressed: () {
-                Navigator.of(context).pop();
-                _showSearchBar();
-              },
-            ),
-            TextButton(
-              child: Text('Try Again'),
-              onPressed: () {
-                Navigator.of(context).pop();
-                _requestLocationPermission();
-              },
-            ),
-          ],
-        );
-      },
-    );
-  }
-
-  void _showPermanentlyDeniedDialog() {
-    showDialog(
-      context: context,
-      builder: (BuildContext context) {
-        return AlertDialog(
-          title: Text('Location Permission Required'),
-          content: Text('Location permission is permanently denied. Please enable it in your device settings.'),
-          actions: <Widget>[
-            TextButton(
-              child: Text('Open Settings'),
-              onPressed: () {
-                ph.openAppSettings();
-              },
-            ),
-            TextButton(
-              child: Text('Use Search Instead'),
-              onPressed: () {
-                Navigator.of(context).pop();
-                _showSearchBar();
-              },
-            ),
-          ],
-        );
-      },
-    );
-  }
-
-  void _showLocationErrorSnackbar() {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('Failed to get current location. Please try again or use search.')),
-    );
-    _showSearchBar();
-  }
-
-  void _showSearchBar() {
-    setState(() {
-      isSearchBarVisible = true;
-      isLoading = false;
+      _initializeWeather(widget.location != null);
     });
   }
 
-
-  Future<void> _initializeWeather({bool useCurrentLocation = false}) async {
-    setState(() {
-      isLoading = true;
-      errorMessage = '';
-    });
-
-    try {
-      if (widget.location != null && widget.location!.isNotEmpty) {
-        await _initializeWeatherForLocation(widget.location!);
-      } else if (useCurrentLocation) {
-        await _getCurrentLocation();
-      } else {
-        // Start with a default location or last known location
-        String? lastLocation = await _getLastKnownLocation();
-        if (lastLocation != null) {
-          await _initializeWeatherForLocation(lastLocation);
-        } else {
-          // Use a default location if no last known location
-          await _initializeWeatherForLocation('London');
-        }
-
-        // Fetch current location in the background if not already using it
-        if (!useCurrentLocation) {
-          _getCurrentLocation();
-        }
-      }
-    } catch (e) {
-      print("Error initializing weather: $e");
-      setState(() {
-        errorMessage = 'Failed to fetch weather data. Please try again.';
-      });
-    } finally {
-      setState(() {
-        isLoading = false;
-      });
-    }
-  }
-
-  
   @override
   void dispose() {
     _searchController.dispose();
@@ -223,40 +59,114 @@ bool isSearchBarVisible = false;
     final prefs = await SharedPreferences.getInstance();
     setState(() {
       _savedPreferences = prefs.getStringList('savedPreferences') ?? [];
-      _isDarkMode = prefs.getBool('isDarkMode') ?? true;
-      _isCelsius = prefs.getBool('isCelsius') ?? true;
     });
+    // NotificationService.checkAndNotify(_currentDes);
   }
 
-  Future<String?> _getLastKnownLocation() async {
-    SharedPreferences prefs = await SharedPreferences.getInstance();
-    return prefs.getString('lastSelectedLocation');
-  }
-
-  Future<void> _initializeWeatherForLocation(String location) async {
+  Future<void> _fetchWeatherForCurrentLocation(double lat, double lon) async {
     try {
-      final weatherData = await getCurrentWeather(location.split(',')[0]);
+      final weatherData = await getWeatherByCoordinates(lat, lon);
       setState(() {
         weather = Future.value(weatherData);
         cityName =
-            '${weatherData['city']['name']}, ${weatherData['city']['country']}';
+            weatherData['city']['name'] + ', ' + weatherData['city']['country'];
+        _checkDescriptionChange(weatherData);
+      });
+    } catch (e) {
+      print("Error fetching weather for current location: $e");
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Failed to fetch weather for current location')),
+      );
+    }
+  }
+
+  Future<Map<String, dynamic>> getWeatherByCoordinates(
+      double lat, double lon) async {
+    try {
+      final res = await http.get(
+        Uri.parse(
+          'https://api.openweathermap.org/data/2.5/forecast?lat=$lat&lon=$lon&APPID=$openWeatherAPIKey',
+        ),
+      );
+      if (res.statusCode != 200) {
+        throw Exception('Failed to load weather data: ${res.statusCode}');
+      }
+      final data = jsonDecode(res.body);
+      print("Fetched weather data: $data");
+      return data;
+    } catch (e) {
+      print("Error fetching weather by coordinates: $e");
+      throw Exception('Failed to load weather data');
+    }
+  }
+
+  void _checkDescriptionChange(Map<String, dynamic> weatherData) {
+    final newDescription = weatherData['list'][0]['weather'][0]['description'];
+    if (newDescription != _currentDescription) {
+      _currentDescription = newDescription;
+      NotificationService.checkAndNotify(_currentDescription);
+    }
+  }
+
+  Future<void> _checkLocationPermission() async {
+    if (widget.location == null) {
+      _getCurrentLocation();
+    } else {
+      _initializeWeatherForLocation(widget.location!);
+    }
+    // NotificationService.checkAndNotify(_currentDes);
+  }
+
+  Future<void> _initializeWeather(bool widgetLoaction) async {
+    setState(() {
+      isLoading = true;
+      errorMessage = '';
+    });
+    try {
+      if (widget.location != null &&
+          widget.location!.isNotEmpty &&
+          widgetLoaction == true) {
+        await _initializeWeatherForLocation(widget.location!);
+      } else {
+        // Delay for 2 seconds before fetching current location
+        await Future.delayed(Duration(seconds: 2));
+        await _getCurrentLocation();
+      }
+    } catch (e) {
+      print("Error initializing weather: $e");
+      setState(() {
+        weather = getCurrentWeather('London');
+        cityName = 'London, United Kingdom';
+      });
+    } finally {
+      setState(() {
+        isLoading = false;
+      });
+    }
+  }
+
+  Future<void> _initializeWeatherForLocation(String location) async {
+    setState(() {
+      isLoading = true;
+      errorMessage = '';
+    });
+    try {
+      setState(() {
+        cityName = location;
+        weather = getCurrentWeather(location.split(',')[0]);
       });
     } catch (e) {
       print("Error initializing weather for location: $e");
       setState(() {
         errorMessage = 'Failed to fetch weather data. Please try again.';
       });
+    } finally {
+      setState(() {
+        isLoading = false;
+      });
     }
   }
 
-  final FlutterLocalNotificationsPlugin flutterLocalNotificationsPlugin =
-      FlutterLocalNotificationsPlugin();
-
-  void testNotification() {
-    showNotification('Test Notification', 'This is a test notification');
-  }
-
- 
   void _handleTemperatureUnitChanged(bool isCelsius) async {
     setState(() {
       _isCelsius = isCelsius;
@@ -265,12 +175,7 @@ bool isSearchBarVisible = false;
     SharedPreferences prefs = await SharedPreferences.getInstance();
     await prefs.setBool('isCelsius', isCelsius);
 
-    // Reload weather for the current locationq
-    if (cityName != 'Current Location') {
-      _initializeWeatherForLocation(cityName);
-    } else {
-      _initializeWeather(useCurrentLocation: true);
-    }
+    // Reload weather for the current location
   }
 
   void selectCity(String selectedCity) async {
@@ -411,40 +316,92 @@ bool isSearchBarVisible = false;
     );
   }
 
-  Future<void> _fetchWeatherForCurrentLocation(double lat, double lon) async {
-    try {
-      final weatherData = await getWeatherByCoordinates(lat, lon);
-      setState(() {
-        weather = Future.value(weatherData);
-        cityName =
-            weatherData['city']['name'] + ', ' + weatherData['city']['country'];
-      });
-    } catch (e) {
-      print("Error fetching weather for current location: $e");
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Failed to fetch weather for current location')),
-      );
-    }
-  }
+  Future<void> _getCurrentLocation() async {
+    bool serviceEnabled;
+    LocationPermission permission;
 
-  Future<Map<String, dynamic>> getWeatherByCoordinates(
-      double lat, double lon) async {
-    try {
-      final res = await http.get(
-        Uri.parse(
-          'https://api.openweathermap.org/data/2.5/forecast?lat=$lat&lon=$lon&APPID=$openWeatherAPIKey',
-        ),
-      );
-      if (res.statusCode != 200) {
-        throw Exception('Failed to load weather data: ${res.statusCode}');
-      }
-      final data = jsonDecode(res.body);
-      print("Fetched weather data: $data"); // Debug print
-      return data;
-    } catch (e) {
-      print("Error fetching weather by coordinates: $e");
-      throw Exception('Failed to load weather data');
+    // Check if location services are enabled
+    serviceEnabled = await Geolocator.isLocationServiceEnabled();
+    if (!serviceEnabled) {
+      _showLocationServiceDialog();
+      return;
     }
+
+    // Check location permission
+    permission = await Geolocator.checkPermission();
+    if (permission == LocationPermission.denied) {
+      permission = await Geolocator.requestPermission();
+      if (permission == LocationPermission.denied) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Location permission denied')),
+        );
+        return;
+      }
+    }
+
+    if (permission == LocationPermission.deniedForever) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Location permissions are permanently denied')),
+      );
+      return;
+    }
+
+    // Try to get the last known position first
+    Position? position = await Geolocator.getLastKnownPosition();
+    if (position != null) {
+      print(
+          "Using cached location: Latitude: ${position.latitude}, Longitude: ${position.longitude}");
+      await _fetchWeatherForCurrentLocation(
+          position.latitude, position.longitude);
+      isCurrentLocation = true;
+      return;
+    }
+
+    // If last known position is not available, get the current position
+    try {
+      position = await Geolocator.getCurrentPosition(
+        desiredAccuracy:
+            LocationAccuracy.low, // Lower accuracy for faster response
+        timeLimit: Duration(seconds: 2), // Set a shorter timeout
+      );
+      print("Latitude: ${position.latitude}, Longitude: ${position.longitude}");
+
+      // Fetch weather data for the current location
+      await _fetchWeatherForCurrentLocation(
+        position.latitude,
+        position.longitude,
+      );
+      isCurrentLocation = true; // Set flag to true for current location
+    } catch (e) {
+      print("Error getting location: $e");
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Failed to get current location')),
+      );
+      isCurrentLocation = false; // Set flag to false if there's an error
+    }
+
+    // Listen for location updates in the background
+    Geolocator.getPositionStream(
+      locationSettings: LocationSettings(
+        accuracy: LocationAccuracy.low, // Lower accuracy for faster response
+        distanceFilter: 10, // Minimum distance (in meters) to trigger an update
+      ),
+    ).listen((Position position) async {
+      print("Latitude: ${position.latitude}, Longitude: ${position.longitude}");
+
+      // Fetch weather data for the current location
+      await _fetchWeatherForCurrentLocation(
+        position.latitude,
+        position.longitude,
+      );
+      isCurrentLocation = true; // Set flag to true for current location
+    }).onError((e) {
+      print("Error getting location: $e");
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Failed to get current location')),
+      );
+      isCurrentLocation = false; // Set flag to false if there's an error
+    });
   }
 
   void _showLocationServiceDialog() {
@@ -480,8 +437,7 @@ bool isSearchBarVisible = false;
         break;
       case 'current_location':
         // _getCurrentLocation();
-        _initializeWeather(useCurrentLocation: true);
-        break;
+        _initializeWeather(false);
 
         break;
       case 'profile':
@@ -516,21 +472,6 @@ bool isSearchBarVisible = false;
     });
   }
 
-  Future<void> showNotification(String title, String body) async {
-    const AndroidNotificationDetails androidPlatformChannelSpecifics =
-        AndroidNotificationDetails(
-      'your_channel_id',
-      'your_channel_name',
-      importance: Importance.max,
-      priority: Priority.high,
-      showWhen: false,
-    );
-    const NotificationDetails platformChannelSpecifics =
-        NotificationDetails(android: androidPlatformChannelSpecifics);
-    await flutterLocalNotificationsPlugin.show(
-        0, title, body, platformChannelSpecifics);
-  }
-
   Widget _buildCurrentWeather(Map<String, dynamic> currentWeatherData) {
     final tempK = currentWeatherData['main']['temp'];
     final currentTemp = convertTemperature(tempK, _isCelsius).round();
@@ -540,15 +481,6 @@ bool isSearchBarVisible = false;
     print('Is current location: $isCurrentLocation');
     print('Saved preferences: $_savedPreferences');
 
-    if (_savedPreferences.contains(weatherDescription) && isCurrentLocation) {
-      print('Weather condition matched: $weatherDescription');
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        showNotification('Weather Alert',
-            'Current weather matches your preference: $weatherDescription');
-      });
-    } else {
-      print('No match found for: $weatherDescription');
-    }
     return Column(
       crossAxisAlignment: CrossAxisAlignment.center,
       children: [
@@ -598,7 +530,7 @@ bool isSearchBarVisible = false;
         ),
         SizedBox(height: 14),
         Text(
-          'broken clouds',
+          weatherDescription,
           style: GoogleFonts.abel(
             textStyle: TextStyle(
                 fontSize: 45, color: AppColors.getTextColor(_isDarkMode)),
@@ -948,72 +880,95 @@ bool isSearchBarVisible = false;
                                   final currentWeatherData =
                                       list.isNotEmpty ? list[0] : null;
 
+                                  final weatherDescription =
+                                      currentWeatherData['weather'][0]
+                                          ['description'];
+
                                   if (currentWeatherData == null) {
                                     return Center(
                                         child:
                                             Text('No weather data available'));
                                   }
-
+                                  _checkDescriptionChange(data);
                                   // Cast numeric values correctly
 // final forecastList = snapshot.data?['hourly'] as List<dynamic>?;
                                   final forecastList =
                                       data['list'] as List<dynamic>? ?? [];
                                   return Padding(
                                     padding: const EdgeInsets.all(8.0),
-                                    child: Column(
-                                      crossAxisAlignment:
-                                          CrossAxisAlignment.center,
-                                      children: [
-                                        _buildCurrentWeather(
-                                            currentWeatherData), // Display current weather
-                                        SizedBox(
-                                            height:
-                                                93.0), // Space between current weather and tabs
-                                        // TabBar for "Today", "Hourly", and "Next 4 Days"
-                                        DefaultTabController(
-                                          length: 3,
-                                          child: Column(
-                                            children: [
-                                              TabBar(
-                                                labelColor:
-                                                    AppColors.getTextColor(
-                                                        _isDarkMode),
-                                                unselectedLabelColor:
-                                                    Colors.grey,
-                                                indicatorColor: Colors.red,
-                                                dividerColor: Colors
-                                                    .transparent, // Customize tab indicator colorindicator color
-                                                tabs: [
-                                                  Tab(text: "Today"),
-                                                  Tab(
-                                                      text:
-                                                          "Hourly Temperature"),
-                                                  Tab(text: "Next 4 Days"),
-                                                ],
-                                              ),
-                                              SizedBox(
-                                                  height:
-                                                      10), // Space between tabs and content
-                                              // TabBarView for displaying the respective content
-                                              Container(
-                                                height:
-                                                    160, // Set height for forecast content
-                                                child: TabBarView(
-                                                  children: [
-                                                    _buildDailyForecast(
-                                                        highlightToday: true,
-                                                        forecastList), // Today forecast
-                                                    _buildHourlyForecast(
-                                                        forecastList), // Hourly forecast
-                                                    _buildDailyForecast(
-                                                        forecastList), // Next 4 days forecast
+                                    child: SingleChildScrollView(
+                                      child: Column(
+                                        crossAxisAlignment:
+                                            CrossAxisAlignment.center,
+                                        children: [
+                                          ElevatedButton(
+                                            onPressed: () async {
+                                              NotificationService
+                                                  .checkAndNotify(
+                                                      weatherDescription);
+                                              await NotificationService
+                                                  .showNotification(
+                                                id: 0, // Use a simple static ID for testing
+                                                title: 'Test Notification',
+                                                body:
+                                                    'This is a test notification.',
+                                              );
+                                            },
+                                            child:
+                                                Text('Send Test Notification'),
+                                          ),
+
+                                          _buildCurrentWeather(
+                                              currentWeatherData), // Display current weather
+                                          SizedBox(
+                                              height:
+                                                  93.0), // Space between current weather and tabs
+                                          // TabBar for "Today", "Hourly", and "Next 4 Days"
+                                          DefaultTabController(
+                                            length: 3,
+                                            child: Column(
+                                              children: [
+                                                TabBar(
+                                                  labelColor:
+                                                      AppColors.getTextColor(
+                                                          _isDarkMode),
+                                                  unselectedLabelColor:
+                                                      Colors.grey,
+                                                  indicatorColor: Colors.red,
+                                                  dividerColor: Colors
+                                                      .transparent, // Customize tab indicator colorindicator color
+                                                  tabs: [
+                                                    Tab(text: "Today"),
+                                                    Tab(
+                                                        text:
+                                                            "Hourly Temperature"),
+                                                    Tab(text: "Next 4 Days"),
                                                   ],
                                                 ),
-                                              ),
-                                            ],
+                                                SizedBox(
+                                                    height:
+                                                        10), // Space between tabs and content
+                                                // TabBarView for displaying the respective content
+                                                Container(
+                                                  height:
+                                                      160, // Set height for forecast content
+                                                  child: TabBarView(
+                                                    children: [
+                                                      _buildDailyForecast(
+                                                          highlightToday: true,
+                                                          forecastList), // Today forecast
+                                                      _buildHourlyForecast(
+                                                          forecastList), // Hourly forecast
+                                                      _buildDailyForecast(
+                                                          forecastList), // Next 4 days forecast
+                                                    ],
+                                                  ),
+                                                ),
+                                              ],
+                                            ),
                                           ),
-                                        ),
-                                      ],
+                                        ],
+                                      ),
                                     ),
                                   );
                                 },
