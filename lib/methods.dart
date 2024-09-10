@@ -3,6 +3,7 @@ import 'preferences.dart'; // Import your PreferencesPage here
 import 'package:weather_icons/weather_icons.dart';
 import 'package:fl_chart/fl_chart.dart';
 import 'dart:math';
+import 'package:geolocator/geolocator.dart';
 
 class WeatherUtils extends StatelessWidget {
   final bool isDarkMode;

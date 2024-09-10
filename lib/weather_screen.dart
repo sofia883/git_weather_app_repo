@@ -45,8 +45,12 @@ class WeatherScreenState extends State<WeatherScreen> {
   void initState() {
     super.initState();
     _loadSavedPreferences().then((_) {
-      _initializeWeather(widget.location != null);
+      _initializeWeather();
     });
+    _handleCurrentLocationRequest();
+
+    NotificationService.initialize();
+    _loadIsCurrentLocation();
   }
 
   @override
@@ -55,12 +59,105 @@ class WeatherScreenState extends State<WeatherScreen> {
     super.dispose();
   }
 
+  Future<void> _loadIsCurrentLocation() async {
+    final prefs = await SharedPreferences.getInstance();
+    setState(() {
+      isCurrentLocation = prefs.getBool('isCurrentLocation') ?? false;
+    });
+  }
+
+  Future<void> _saveIsCurrentLocation(bool value) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool('isCurrentLocation', value);
+  }
+
   Future<void> _loadSavedPreferences() async {
     final prefs = await SharedPreferences.getInstance();
     setState(() {
       _savedPreferences = prefs.getStringList('savedPreferences') ?? [];
     });
     // NotificationService.checkAndNotify(_currentDes);
+  }
+
+  Future<void> _initializeWeather() async {
+    setState(() {
+      isLoading = true;
+      errorMessage = '';
+    });
+    try {
+      if (widget.location != null && widget.location!.isNotEmpty) {
+        await _initializeWeatherForLocation(widget.location!);
+      } else {
+        // await _handleLocationPermission();
+      }
+    } catch (e) {
+      print("Error initializing weather: $e");
+      _showSearchBar();
+    } finally {
+      setState(() {
+        isLoading = false;
+      });
+    }
+  }
+
+  Future<void> _handleCurrentLocationRequest() async {
+    bool serviceEnabled;
+    LocationPermission permission;
+
+    // Check if location services are enabled
+    serviceEnabled = await Geolocator.isLocationServiceEnabled();
+    if (!serviceEnabled) {
+      _showLocationServiceDialog();
+      return;
+    }
+
+    // Check location permission
+    permission = await Geolocator.checkPermission();
+    if (permission == LocationPermission.denied) {
+      permission = await Geolocator.requestPermission();
+      if (permission == LocationPermission.denied) {
+        _showLocationPermissionDialog(true);
+        return;
+      }
+    }
+
+    if (permission == LocationPermission.deniedForever) {
+      _showLocationPermissionDialog(false);
+      return;
+    }
+
+    // If permission is granted, fetch current location weather
+    await _getCurrentLocation();
+  }
+
+  Future<void> _getCurrentLocation() async {
+    setState(() {
+      isLoading = true;
+      errorMessage = '';
+    });
+
+    try {
+      Position position = await Geolocator.getCurrentPosition(
+        desiredAccuracy: LocationAccuracy.high,
+      );
+
+      await _fetchWeatherForCurrentLocation(
+          position.latitude, position.longitude);
+
+      setState(() {
+        isCurrentLocation = true;
+      });
+    } catch (e) {
+      print("Error getting location: $e");
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Failed to get current location')),
+      );
+      _showSearchBar();
+    } finally {
+      setState(() {
+        isLoading = false;
+      });
+    }
   }
 
   Future<void> _fetchWeatherForCurrentLocation(double lat, double lon) async {
@@ -77,8 +174,123 @@ class WeatherScreenState extends State<WeatherScreen> {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('Failed to fetch weather for current location')),
       );
+      _showSearchBar();
     }
   }
+
+  void _showLocationServiceDialog() {
+    showDialog(
+      context: context,
+      builder: (BuildContext context) {
+        return AlertDialog(
+          title: Text('Location Services Disabled'),
+          content: Text('Please enable location services to use this feature.'),
+          actions: <Widget>[
+            TextButton(
+              child: Text('Open Settings'),
+              onPressed: () async {
+                Navigator.of(context).pop();
+                await Geolocator.openLocationSettings();
+                // Check if location services are enabled after returning from settings
+                bool serviceEnabled =
+                    await Geolocator.isLocationServiceEnabled();
+                if (serviceEnabled) {
+                  _handleCurrentLocationRequest(); // Retry getting location
+                }
+              },
+            ),
+            TextButton(
+              child: Text('Cancel'),
+              onPressed: () {
+                Navigator.of(context).pop();
+                _showSearchBar();
+              },
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  void _showLocationPermissionDialog(bool canAskAgain) {
+    showDialog(
+      context: context,
+      builder: (BuildContext context) {
+        return AlertDialog(
+          title: Text('Location Permission Required'),
+          content:
+              Text('Please allow location access to get current weather data.'),
+          actions: <Widget>[
+            if (canAskAgain)
+              TextButton(
+                child: Text('Allow'),
+                onPressed: () {
+                  Navigator.of(context).pop();
+                  _handleCurrentLocationRequest();
+                },
+              ),
+            TextButton(
+              child: Text(canAskAgain ? 'Deny' : 'Open Settings'),
+              onPressed: () async {
+                Navigator.of(context).pop();
+                if (!canAskAgain) {
+                  await Geolocator.openAppSettings();
+                  // Check permission after returning from settings
+                  LocationPermission permission =
+                      await Geolocator.checkPermission();
+                  if (permission == LocationPermission.always ||
+                      permission == LocationPermission.whileInUse) {
+                    _getCurrentLocation(); // Fetch weather if permission granted
+                  } else {
+                    _showSearchBar();
+                  }
+                } else {
+                  _showSearchBar();
+                }
+              },
+            ),
+            TextButton(
+              child: Text('Cancel'),
+              onPressed: () {
+                Navigator.of(context).pop();
+                _showSearchBar();
+              },
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  // Future<void> _handleLocationPermission() async {
+  //   bool serviceEnabled;
+  //   LocationPermission permission;
+
+  //   // Check if location services are enabled
+  //   serviceEnabled = await Geolocator.isLocationServiceEnabled();
+  //   if (!serviceEnabled) {
+  //     _showLocationServiceDialog();
+  //     return;
+  //   }
+
+  //   // Check location permission
+  //   permission = await Geolocator.checkPermission();
+  //   if (permission == LocationPermission.denied) {
+  //     permission = await Geolocator.requestPermission();
+  //     if (permission == LocationPermission.denied) {
+  //       _showLocationPermissionDialog();
+  //       return;
+  //     }
+  //   }
+
+  //   if (permission == LocationPermission.deniedForever) {
+  //     _showLocationPermissionDialog();
+  //     return;
+  //   }
+
+  //   // If permission is granted, fetch current location weather
+  //   await _getCurrentLocation();
+  // }
 
   Future<Map<String, dynamic>> getWeatherByCoordinates(
       double lat, double lon) async {
@@ -100,49 +312,65 @@ class WeatherScreenState extends State<WeatherScreen> {
     }
   }
 
-  void _checkDescriptionChange(Map<String, dynamic> weatherData) {
-    final newDescription = weatherData['list'][0]['weather'][0]['description'];
-    if (newDescription != _currentDescription) {
-      _currentDescription = newDescription;
-      NotificationService.checkAndNotify(_currentDescription);
+  // ... rest of the existing code ...
+
+  Future<String> getWeatherConditionForCurrentLocation(
+      double lat, double lon) async {
+    try {
+      // Fetch weather data based on coordinates
+      final weatherData = await getWeatherByCoordinates(lat, lon);
+
+      // Extract the weather condition description
+      String weatherDescription =
+          weatherData['list'][0]['weather'][0]['description'];
+      print(weatherDescription);
+
+      // Optionally, you can also fetch other details like temperature, humidity, etc.
+      // Example:
+      // double temperature = weatherData['list'][0]['main']['temp'];
+
+      // Combine the description or return it
+      return weatherDescription;
+    } catch (e) {
+      print("Error fetching weather for current location: $e");
+      return 'Failed to fetch weather condition';
     }
   }
 
   Future<void> _checkLocationPermission() async {
-    if (widget.location == null) {
-      _getCurrentLocation();
-    } else {
-      _initializeWeatherForLocation(widget.location!);
+    bool serviceEnabled;
+    LocationPermission permission;
+
+    // Check if location services are enabled
+    serviceEnabled = await Geolocator.isLocationServiceEnabled();
+    if (!serviceEnabled) {
+      _showLocationServiceDialog();
+      return;
+    }
+
+    // Check location permission
+    permission = await Geolocator.checkPermission();
+    if (permission == LocationPermission.denied) {
+      permission = await Geolocator.requestPermission();
+      if (permission == LocationPermission.denied) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Location permission denied')),
+        );
+        return _loadSavedPreferences().then((_) {
+          _initializeWeather();
+        });
+      }
+    }
+
+    if (permission == LocationPermission.deniedForever) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Location permissions are permanently denied')),
+      );
+      return _loadSavedPreferences().then((_) {
+        _initializeWeather();
+      });
     }
     // NotificationService.checkAndNotify(_currentDes);
-  }
-
-  Future<void> _initializeWeather(bool widgetLoaction) async {
-    setState(() {
-      isLoading = true;
-      errorMessage = '';
-    });
-    try {
-      if (widget.location != null &&
-          widget.location!.isNotEmpty &&
-          widgetLoaction == true) {
-        await _initializeWeatherForLocation(widget.location!);
-      } else {
-        // Delay for 2 seconds before fetching current location
-        await Future.delayed(Duration(seconds: 2));
-        await _getCurrentLocation();
-      }
-    } catch (e) {
-      print("Error initializing weather: $e");
-      setState(() {
-        weather = getCurrentWeather('London');
-        cityName = 'London, United Kingdom';
-      });
-    } finally {
-      setState(() {
-        isLoading = false;
-      });
-    }
   }
 
   Future<void> _initializeWeatherForLocation(String location) async {
@@ -185,9 +413,9 @@ class WeatherScreenState extends State<WeatherScreen> {
       searchResults = [];
       _isSearching = false;
       _searchController.clear();
-      isCurrentLocation =
-          false; // Set flag to false when user selects a different city
+      isCurrentLocation = false;
     });
+    await _saveIsCurrentLocation(false); // Save the value
     _showSaveLocationSnackbar(selectedCity);
 
     // Save the selected location
@@ -316,112 +544,10 @@ class WeatherScreenState extends State<WeatherScreen> {
     );
   }
 
-  Future<void> _getCurrentLocation() async {
-    bool serviceEnabled;
-    LocationPermission permission;
-
-    // Check if location services are enabled
-    serviceEnabled = await Geolocator.isLocationServiceEnabled();
-    if (!serviceEnabled) {
-      _showLocationServiceDialog();
-      return;
-    }
-
-    // Check location permission
-    permission = await Geolocator.checkPermission();
-    if (permission == LocationPermission.denied) {
-      permission = await Geolocator.requestPermission();
-      if (permission == LocationPermission.denied) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Location permission denied')),
-        );
-        return;
-      }
-    }
-
-    if (permission == LocationPermission.deniedForever) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Location permissions are permanently denied')),
-      );
-      return;
-    }
-
-    // Try to get the last known position first
-    Position? position = await Geolocator.getLastKnownPosition();
-    if (position != null) {
-      print(
-          "Using cached location: Latitude: ${position.latitude}, Longitude: ${position.longitude}");
-      await _fetchWeatherForCurrentLocation(
-          position.latitude, position.longitude);
-      isCurrentLocation = true;
-      return;
-    }
-
-    // If last known position is not available, get the current position
-    try {
-      position = await Geolocator.getCurrentPosition(
-        desiredAccuracy:
-            LocationAccuracy.low, // Lower accuracy for faster response
-        timeLimit: Duration(seconds: 2), // Set a shorter timeout
-      );
-      print("Latitude: ${position.latitude}, Longitude: ${position.longitude}");
-
-      // Fetch weather data for the current location
-      await _fetchWeatherForCurrentLocation(
-        position.latitude,
-        position.longitude,
-      );
-      isCurrentLocation = true; // Set flag to true for current location
-    } catch (e) {
-      print("Error getting location: $e");
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Failed to get current location')),
-      );
-      isCurrentLocation = false; // Set flag to false if there's an error
-    }
-
-    // Listen for location updates in the background
-    Geolocator.getPositionStream(
-      locationSettings: LocationSettings(
-        accuracy: LocationAccuracy.low, // Lower accuracy for faster response
-        distanceFilter: 10, // Minimum distance (in meters) to trigger an update
-      ),
-    ).listen((Position position) async {
-      print("Latitude: ${position.latitude}, Longitude: ${position.longitude}");
-
-      // Fetch weather data for the current location
-      await _fetchWeatherForCurrentLocation(
-        position.latitude,
-        position.longitude,
-      );
-      isCurrentLocation = true; // Set flag to true for current location
-    }).onError((e) {
-      print("Error getting location: $e");
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Failed to get current location')),
-      );
-      isCurrentLocation = false; // Set flag to false if there's an error
+  void _showSearchBar() {
+    setState(() {
+      _isSearching = true;
     });
-  }
-
-  void _showLocationServiceDialog() {
-    showDialog(
-      context: context,
-      builder: (BuildContext context) {
-        return AlertDialog(
-          title: Text('Location Services Disabled'),
-          content: Text('Please enable location services to use this feature.'),
-          actions: <Widget>[
-            TextButton(
-              child: Text('OK'),
-              onPressed: () {
-                Navigator.of(context).pop();
-              },
-            ),
-          ],
-        );
-      },
-    );
   }
 
   void _handleMenuSelection(String value) {
@@ -436,8 +562,15 @@ class WeatherScreenState extends State<WeatherScreen> {
         });
         break;
       case 'current_location':
-        // _getCurrentLocation();
-        _initializeWeather(false);
+        // _initializeWeather();
+        // _loadSavedPreferences().then((_) {
+        //   _initializeWeather();
+        // });
+
+        // _handleLocationPermission();
+        _handleCurrentLocationRequest();
+
+        // _initializeWeather();
 
         break;
       case 'profile':
@@ -472,12 +605,23 @@ class WeatherScreenState extends State<WeatherScreen> {
     });
   }
 
+  void _checkDescriptionChange(Map<String, dynamic> weatherData) {
+    final newDescription = weatherData['list'][0]['weather'][0]['description'];
+    // final newDescription = 'Tornado';
+
+    if (newDescription != _currentDescription && isCurrentLocation) {
+      NotificationService.checkAndNotify(
+        newDescription,
+      );
+    }
+  }
+
   Widget _buildCurrentWeather(Map<String, dynamic> currentWeatherData) {
     final tempK = currentWeatherData['main']['temp'];
     final currentTemp = convertTemperature(tempK, _isCelsius).round();
-    final weatherDescription = currentWeatherData['weather'][0]['description'];
+    _currentDescription = currentWeatherData['weather'][0]['description'];
 
-    print('Current weather description: $weatherDescription');
+    print('Current weather description: $_currentDescription');
     print('Is current location: $isCurrentLocation');
     print('Saved preferences: $_savedPreferences');
 
@@ -530,7 +674,7 @@ class WeatherScreenState extends State<WeatherScreen> {
         ),
         SizedBox(height: 14),
         Text(
-          weatherDescription,
+          _currentDescription,
           style: GoogleFonts.abel(
             textStyle: TextStyle(
                 fontSize: 45, color: AppColors.getTextColor(_isDarkMode)),
@@ -549,6 +693,8 @@ class WeatherScreenState extends State<WeatherScreen> {
   }
 
   Widget _buildHourlyForecast(List<dynamic> list) {
+    final now = DateTime.now();
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -558,31 +704,38 @@ class WeatherScreenState extends State<WeatherScreen> {
             height: 120,
             child: ListView.builder(
               scrollDirection: Axis.horizontal,
-              itemCount:
-                  min(8, list.length), // Show next 24 hours (8 * 3 hours)
+              itemCount: min(8, list.length),
               itemBuilder: (context, index) {
                 final hourlyWeather = list[index];
                 final temp = convertTemperature(
                     hourlyWeather['main']['temp'], _isCelsius);
-                final time = DateTime.fromMillisecondsSinceEpoch(
+                final forecastTime = DateTime.fromMillisecondsSinceEpoch(
                     hourlyWeather['dt'] * 1000);
                 final weatherIcon = WeatherUtils.getWeatherIcon(
                     hourlyWeather['weather'][0]['main']);
+
+                // Check if current time is within this 3-hour block
+                final isCurrentBlock = now.isAfter(forecastTime) &&
+                    now.isBefore(forecastTime.add(Duration(hours: 3)));
+
+                // Determine text color based on whether it's the current block
+                final textColor = isCurrentBlock
+                    ? Colors.red
+                    : (_isDarkMode ? Colors.white : Colors.black);
 
                 return Padding(
                   padding: const EdgeInsets.symmetric(horizontal: 12.0),
                   child: Column(
                     children: [
                       Text(
-                        DateFormat('ha')
-                            .format(time), // Format as hour (e.g., 3PM)
-                        style: TextStyle(fontSize: 14),
+                        DateFormat('ha').format(forecastTime),
+                        style: TextStyle(fontSize: 14, color: textColor),
                       ),
                       SizedBox(height: 8),
                       BoxedIcon(
                         weatherIcon,
                         size: 30,
-                        color: _isDarkMode ? Colors.white : Colors.black,
+                        color: textColor,
                       ),
                       SizedBox(height: 8),
                       Text(
@@ -590,6 +743,7 @@ class WeatherScreenState extends State<WeatherScreen> {
                         style: TextStyle(
                           fontSize: 16,
                           fontWeight: FontWeight.bold,
+                          color: textColor,
                         ),
                       ),
                     ],
@@ -905,7 +1059,8 @@ class WeatherScreenState extends State<WeatherScreen> {
                                             onPressed: () async {
                                               NotificationService
                                                   .checkAndNotify(
-                                                      weatherDescription);
+                                                weatherDescription,
+                                              );
                                               await NotificationService
                                                   .showNotification(
                                                 id: 0, // Use a simple static ID for testing
@@ -1080,3 +1235,139 @@ class AppColors {
     return isDarkMode ? Colors.white : Colors.black;
   }
 }
+// import 'package:flutter/material.dart';
+// import 'package:geolocator/geolocator.dart';
+// // ... (other imports remain the same)
+
+// class WeatherScreenState extends State<WeatherScreen> {
+//   // ... (existing properties remain the same)
+
+//   @override
+//   void initState() {
+//     super.initState();
+//     loadSavedPreferences().then(() {
+//       _initializeWeather();
+//     });
+//     NotificationService.initialize();
+//   }
+
+//   Future<void> _initializeWeather() async {
+//     setState(() {
+//       isLoading = true;
+//       errorMessage = '';
+//     });
+//     try {
+//       if (widget.location != null && widget.location!.isNotEmpty) {
+//         await _initializeWeatherForLocation(widget.location!);
+//       } else {
+//         await _handleLocationPermission();
+//       }
+//     } catch (e) {
+//       print("Error initializing weather: $e");
+//       _showSearchBar();
+//     } finally {
+//       setState(() {
+//         isLoading = false;
+//       });
+//     }
+//   }
+
+//   Future<void> _handleLocationPermission() async {
+//     bool serviceEnabled;
+//     LocationPermission permission;
+
+//     // Check if location services are enabled
+//     serviceEnabled = await Geolocator.isLocationServiceEnabled();
+//     if (!serviceEnabled) {
+//       _showLocationServiceDialog();
+//       return;
+//     }
+
+//     // Check location permission
+//     permission = await Geolocator.checkPermission();
+//     if (permission == LocationPermission.denied) {
+//       permission = await Geolocator.requestPermission();
+//       if (permission == LocationPermission.denied) {
+//         _showLocationPermissionDialog();
+//         return;
+//       }
+//     }
+
+//     if (permission == LocationPermission.deniedForever) {
+//       _showLocationPermissionDialog();
+//       return;
+//     }
+
+//     // If permission is granted, fetch current location weather
+//     await _getCurrentLocation();
+//   }
+
+//   void _showLocationServiceDialog() {
+//     showDialog(
+//       context: context,
+//       builder: (BuildContext context) {
+//         return AlertDialog(
+//           title: Text('Location Services Disabled'),
+//           content: Text('Please enable location services to use this feature.'),
+//           actions: <Widget>[
+//             TextButton(
+//               child: Text('Open Settings'),
+//               onPressed: () {
+//                 Navigator.of(context).pop();
+//                 Geolocator.openLocationSettings();
+//               },
+//             ),
+//             TextButton(
+//               child: Text('Cancel'),
+//               onPressed: () {
+//                 Navigator.of(context).pop();
+//                 _showSearchBar();
+//               },
+//             ),
+//           ],
+//         );
+//       },
+//     );
+//   }
+
+//   void _showLocationPermissionDialog() {
+//     showDialog(
+//       context: context,
+//       builder: (BuildContext context) {
+//         return AlertDialog(
+//           title: Text('Location Permission Required'),
+//           content: Text('Please allow location access to get current weather data.'),
+//           actions: <Widget>[
+//             TextButton(
+//               child: Text('Allow'),
+//               onPressed: () {
+//                 Navigator.of(context).pop();
+//                 _handleLocationPermission();
+//               },
+//             ),
+//             TextButton(
+//               child: Text('Deny'),
+//               onPressed: () {
+//                 Navigator.of(context).pop();
+//                 _showSearchBar();
+//               },
+//             ),
+//           ],
+//         );
+//       },
+//     );
+//   }
+
+//   void _showSearchBar() {
+//     setState(() {
+//       _isSearching = true;
+//     });
+//   }
+
+//   // ... (other methods remain the same)
+
+//   @override
+//   Widget build(BuildContext context) {
+//     // ... (existing build method remains the same)
+//   }
+// }

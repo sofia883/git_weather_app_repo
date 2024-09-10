@@ -68,29 +68,24 @@ class _MainScreenState extends State<MainScreen> {
         index: _selectedIndex,
         children: _screens,
       ),
-      bottomNavigationBar: ClipRRect(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(30)),
-        child: BottomNavigationBar(
-          items: [
-            BottomNavigationBarItem(
-              icon: Icon(Icons.cloud),
-              label: 'Weather',
-            ),
-            BottomNavigationBarItem(
-              icon: Icon(Icons.home),
-              label: 'Home',
-            ),
-            // Add more items as needed
-          ],
-          currentIndex: _selectedIndex,
-          selectedItemColor: Colors.blue,
-          unselectedItemColor: Colors.grey,
-          onTap: (index) {
-            setState(() {
-              _selectedIndex = index;
-            });
-          },
-        ),
+    bottomNavigationBar: BottomNavigationBar(
+        items: [
+          BottomNavigationBarItem(
+            icon: Icon(Icons.home),
+            label: 'Home',
+          ),
+          BottomNavigationBarItem(
+            icon: Icon(Icons.person),
+            label: 'Profile',
+          ),
+          // Add more items as needed
+        ],
+        currentIndex: _selectedIndex,
+        onTap: (index) {
+          setState(() {
+            _selectedIndex = index;
+          });
+        },
       ),
     );
   }
