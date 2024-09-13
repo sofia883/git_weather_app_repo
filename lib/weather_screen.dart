@@ -3,6 +3,8 @@ import 'package:intl/intl.dart';
 import 'package:http/http.dart' as http;
 import 'dart:convert';
 import 'dart:math';
+import 'dart:io'; // For SocketException
+import 'dart:async'; // For TimeoutException
 import 'package:weather_app/api_key.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:country_picker/country_picker.dart';
@@ -14,7 +16,8 @@ import 'methods.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'notification_service.dart';
-// import 'package:flutter_local_notifications/flutter_local_notifications.dart';
+import 'package:app_settings/app_settings.dart';
+import 'package:connectivity_plus/connectivity_plus.dart';
 
 class WeatherScreen extends StatefulWidget {
   final String? location;
@@ -41,146 +44,66 @@ class WeatherScreenState extends State<WeatherScreen> {
   List<String> _savedPreferences = []; // Add this line
   bool isCurrentLocation = false;
   String _currentDescription = '';
+  bool _hasNetworkError = false;
+  bool _isLocationPermissionDenied = false;
+  bool _isLocationServiceEnabled = false;
+
+  bool _isCurrentLocationFetched = false;
+  double? lastKnownLatitude;
+  double? lastKnownLongitude;
+  StreamSubscription<ServiceStatus>? _locationServiceStatusSubscription;
+
   @override
   void initState() {
     super.initState();
-    _loadSavedPreferences().then((_) {
-      _initializeWeather();
-    });
-    _handleCurrentLocationRequest();
 
-    NotificationService.initialize();
-    _loadIsCurrentLocation();
+    _initializeApp();
   }
 
   @override
   void dispose() {
     _searchController.dispose();
+    _locationServiceStatusSubscription?.cancel();
     super.dispose();
   }
 
-  Future<void> _loadIsCurrentLocation() async {
-    final prefs = await SharedPreferences.getInstance();
-    setState(() {
-      isCurrentLocation = prefs.getBool('isCurrentLocation') ?? false;
-    });
-  }
-
-  Future<void> _saveIsCurrentLocation(bool value) async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setBool('isCurrentLocation', value);
-  }
-
-  Future<void> _loadSavedPreferences() async {
-    final prefs = await SharedPreferences.getInstance();
-    setState(() {
-      _savedPreferences = prefs.getStringList('savedPreferences') ?? [];
-    });
-    // NotificationService.checkAndNotify(_currentDes);
-  }
-
-  Future<void> _initializeWeather() async {
+  Future<void> _initializeApp() async {
     setState(() {
       isLoading = true;
       errorMessage = '';
+      _hasNetworkError = false;
     });
+
     try {
-      if (widget.location != null && widget.location!.isNotEmpty) {
-        await _initializeWeatherForLocation(widget.location!);
-      } else {
-        // await _handleLocationPermission();
-      }
+      await _checkConnectivity();
+      await _checkLocationService();
+      await _handleLocationPermission();
+      await _loadSavedPreferences();
     } catch (e) {
-      print("Error initializing weather: $e");
-      _showSearchBar();
+      _handleError(e);
     } finally {
+      // _loadSavedPreferences();
       setState(() {
         isLoading = false;
       });
     }
   }
 
-  Future<void> _handleCurrentLocationRequest() async {
-    bool serviceEnabled;
-    LocationPermission permission;
-
-    // Check if location services are enabled
-    serviceEnabled = await Geolocator.isLocationServiceEnabled();
-    if (!serviceEnabled) {
-      _showLocationServiceDialog();
-      return;
-    }
-
-    // Check location permission
-    permission = await Geolocator.checkPermission();
-    if (permission == LocationPermission.denied) {
-      permission = await Geolocator.requestPermission();
-      if (permission == LocationPermission.denied) {
-        _showLocationPermissionDialog(true);
-        return;
+  void _listenForLocationServiceChanges() {
+    _locationServiceStatusSubscription =
+        Geolocator.getServiceStatusStream().listen((ServiceStatus status) {
+      if (status == ServiceStatus.disabled) {
+        _handleLocationServiceDisabled();
+      } else if (status == ServiceStatus.enabled) {
+        _handleLocationServiceEnabled();
       }
-    }
-
-    if (permission == LocationPermission.deniedForever) {
-      _showLocationPermissionDialog(false);
-      return;
-    }
-
-    // If permission is granted, fetch current location weather
-    await _getCurrentLocation();
-  }
-
-  Future<void> _getCurrentLocation() async {
-    setState(() {
-      isLoading = true;
-      errorMessage = '';
     });
-
-    try {
-      Position position = await Geolocator.getCurrentPosition(
-        desiredAccuracy: LocationAccuracy.high,
-      );
-
-      await _fetchWeatherForCurrentLocation(
-          position.latitude, position.longitude);
-
-      setState(() {
-        isCurrentLocation = true;
-      });
-    } catch (e) {
-      print("Error getting location: $e");
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Failed to get current location')),
-      );
-      _showSearchBar();
-    } finally {
-      setState(() {
-        isLoading = false;
-      });
-    }
   }
 
-  Future<void> _fetchWeatherForCurrentLocation(double lat, double lon) async {
-    try {
-      final weatherData = await getWeatherByCoordinates(lat, lon);
-      setState(() {
-        weather = Future.value(weatherData);
-        cityName =
-            weatherData['city']['name'] + ', ' + weatherData['city']['country'];
-        _checkDescriptionChange(weatherData);
-      });
-    } catch (e) {
-      print("Error fetching weather for current location: $e");
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Failed to fetch weather for current location')),
-      );
-      _showSearchBar();
-    }
-  }
-
-  void _showLocationServiceDialog() {
+  void _showLocationServiceDisabledDialog() {
     showDialog(
       context: context,
+      barrierDismissible: false,
       builder: (BuildContext context) {
         return AlertDialog(
           title: Text('Location Services Disabled'),
@@ -191,16 +114,110 @@ class WeatherScreenState extends State<WeatherScreen> {
               onPressed: () async {
                 Navigator.of(context).pop();
                 await Geolocator.openLocationSettings();
-                // Check if location services are enabled after returning from settings
+                // Check if location service is enabled after returning from settings
                 bool serviceEnabled =
                     await Geolocator.isLocationServiceEnabled();
                 if (serviceEnabled) {
-                  _handleCurrentLocationRequest(); // Retry getting location
+                  _handleCurrentLocationRequest();
                 }
               },
             ),
             TextButton(
-              child: Text('Cancel'),
+              child: Text('Search Manually'),
+              onPressed: () {
+                Navigator.of(context).pop();
+                _showSearchBar();
+              },
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  void _handleLocationServiceDisabled() {
+    setState(() {
+      _isLocationServiceEnabled = false;
+    });
+    if (isCurrentLocation) {
+      _showLocationServiceDisabledDialog();
+    }
+  }
+
+  void _handleLocationServiceEnabled() {
+    setState(() {
+      _isLocationServiceEnabled = true;
+    });
+    if (isCurrentLocation) {
+      _handleCurrentLocationRequest();
+    }
+  }
+
+  Future<void> _handleCurrentLocationRequest() async {
+    setState(() {
+      isLoading = true;
+    });
+
+    bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
+    if (!serviceEnabled) {
+      setState(() {
+        isLoading = false;
+      });
+      _showLocationServiceDialog();
+      return;
+    }
+
+    LocationPermission permission = await Geolocator.checkPermission();
+    if (permission == LocationPermission.denied) {
+      permission = await Geolocator.requestPermission();
+      if (permission == LocationPermission.denied) {
+        setState(() {
+          isLoading = false;
+        });
+        _showLocationPermissionDialog(true);
+        return;
+      }
+    }
+
+    if (permission == LocationPermission.deniedForever) {
+      setState(() {
+        isLoading = false;
+      });
+      _showLocationPermissionDialog(false);
+      return;
+    }
+
+    // If we have permission, get the current location
+    await _getCurrentLocation();
+    setState(() {
+      isLoading = false;
+    });
+  }
+
+  void _showLocationServiceDialog() {
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (BuildContext context) {
+        return AlertDialog(
+          title: Text('Location Services Disabled'),
+          content: Text('Please enable location services to use this feature.'),
+          actions: <Widget>[
+            TextButton(
+              child: Text('Open Settings'),
+              onPressed: () async {
+                Navigator.of(context).pop();
+                await Geolocator.openLocationSettings();
+                // Check if location service is enabled after returning from settings
+                bool serviceEnabled =
+                    await Geolocator.isLocationServiceEnabled();
+                if (serviceEnabled) {
+                  _handleCurrentLocationRequest();
+                }
+              },
+            ),
+            TextButton(
+              child: Text('Search Manually'),
               onPressed: () {
                 Navigator.of(context).pop();
                 _showSearchBar();
@@ -215,6 +232,7 @@ class WeatherScreenState extends State<WeatherScreen> {
   void _showLocationPermissionDialog(bool canAskAgain) {
     showDialog(
       context: context,
+      barrierDismissible: false,
       builder: (BuildContext context) {
         return AlertDialog(
           title: Text('Location Permission Required'),
@@ -240,17 +258,13 @@ class WeatherScreenState extends State<WeatherScreen> {
                       await Geolocator.checkPermission();
                   if (permission == LocationPermission.always ||
                       permission == LocationPermission.whileInUse) {
-                    _getCurrentLocation(); // Fetch weather if permission granted
-                  } else {
-                    _showSearchBar();
+                    _handleCurrentLocationRequest();
                   }
-                } else {
-                  _showSearchBar();
                 }
               },
             ),
             TextButton(
-              child: Text('Cancel'),
+              child: Text('Search Manually'),
               onPressed: () {
                 Navigator.of(context).pop();
                 _showSearchBar();
@@ -262,35 +276,394 @@ class WeatherScreenState extends State<WeatherScreen> {
     );
   }
 
-  // Future<void> _handleLocationPermission() async {
-  //   bool serviceEnabled;
-  //   LocationPermission permission;
+  Future<void> _getCurrentLocation() async {
+    try {
+      Position position = await Geolocator.getCurrentPosition(
+        desiredAccuracy: LocationAccuracy.high,
+      );
+      lastKnownLatitude = position.latitude;
+      lastKnownLongitude = position.longitude;
+      await _fetchWeatherForCurrentLocation(
+          position.latitude, position.longitude);
+      setState(() {
+        isCurrentLocation = true;
+      });
+    } catch (e) {
+      throw Exception('Error getting location: $e');
+    }
+  }
 
-  //   // Check if location services are enabled
-  //   serviceEnabled = await Geolocator.isLocationServiceEnabled();
-  //   if (!serviceEnabled) {
-  //     _showLocationServiceDialog();
-  //     return;
+ 
+  Future<void> _checkConnectivity() async {
+    var connectivityResult = await (Connectivity().checkConnectivity());
+    if (connectivityResult == ConnectivityResult.none) {
+      throw SocketException('No internet connection');
+    }
+  }
+
+  Future<void> _handleLocationPermission() async {
+    LocationPermission permission = await Geolocator.checkPermission();
+    if (permission == LocationPermission.denied) {
+      permission = await Geolocator.requestPermission();
+      if (permission == LocationPermission.denied) {
+        _showLocationPermissionDialog(true);
+        return;
+      }
+    }
+
+    if (permission == LocationPermission.deniedForever) {
+      _showLocationPermissionDialog(false);
+      return;
+    }
+
+    // If we have permission, try to get the current location
+    await _getCurrentLocation();
+  }
+
+
+  void _handleError(dynamic error) {
+    setState(() {
+      isLoading = false;
+      if (error is SocketException || error is TimeoutException) {
+        _hasNetworkError = true;
+        errorMessage =
+            'No internet connection. Please check your network settings.';
+      } else if (error.toString().contains('Location')) {
+        _isLocationPermissionDenied = true;
+        errorMessage = error.toString();
+      } else {
+        errorMessage = 'An unexpected error occurred. Please try again.';
+      }
+    });
+    _showNetworkErrorDialog();
+  }
+
+  Future<void> _checkLocationService() async {
+    bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
+    setState(() {
+      _isLocationServiceEnabled = serviceEnabled;
+    });
+  }
+
+  Future<void> _initializeWeather() async {
+    setState(() {
+      isLoading = true;
+      errorMessage = '';
+      _hasNetworkError = false;
+    });
+
+    try {
+
+      await _checkConnectivity();
+      if (widget.location != null && widget.location!.isNotEmpty) {
+        await _initializeWeatherForLocation(widget.location!);
+      } else if (_savedPreferences.isNotEmpty) {
+        await _initializeWeatherForLocation(_savedPreferences.first);
+      } else {
+        // If no saved location, attempt to get current location
+        await _handleCurrentLocationRequest();
+      }
+    } catch (e) {
+      _handleError(e);
+    } finally {
+      setState(() {
+        isLoading = false;
+      });
+    }
+   
+  }
+
+  Future<void> _refreshCurrentLocationWeather() async {
+    try {
+      setState(() {
+        isLoading = true;
+      });
+      // Assuming you have a method to fetch weather for the last known location
+      await _fetchWeatherForCurrentLocation(
+          lastKnownLatitude!, lastKnownLongitude!);
+    } catch (e) {
+      _handleError(e);
+    } finally {
+      setState(() {
+        isLoading = false;
+      });
+    }
+  }
+
+ 
+  Widget _buildNetworkErrorWidget() {
+    return Center(
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Text(
+            errorMessage,
+            style: TextStyle(fontSize: 18, color: Colors.red),
+          ),
+          SizedBox(height: 20),
+          ElevatedButton(
+            onPressed: _showNetworkErrorDialog,
+            child: Text('Check Network Connection'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildLocationPermissionDeniedWidget() {
+    return Center(
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Text(
+            errorMessage,
+            style: TextStyle(fontSize: 18, color: Colors.red),
+          ),
+          SizedBox(height: 20),
+          ElevatedButton(
+            onPressed: () async {
+              await Geolocator.openAppSettings();
+              _initializeWeather();
+            },
+            child: Text('Open Location Settings'),
+          ),
+          ElevatedButton(
+            onPressed: () async {
+              _showSearchBar();
+            },
+            child: Text('Search Manually'),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              Navigator.of(context).pop();
+            },
+            child: Text('Cancel'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _loadSavedPreferences() async {
+    final prefs = await SharedPreferences.getInstance();
+    setState(() {
+      _savedPreferences = prefs.getStringList('savedPreferences') ?? [];
+    });
+    // NotificationService.checkAndNotify(_currentDes);
+  }
+
+  void _handleOtherErrors(dynamic e) {
+    // Handle other types of errors (e.g., location, data parsing, etc.)
+    setState(() {
+      errorMessage = 'Something went wrong. Please try again.';
+    });
+  }
+
+  void _showSearchBarOption() {
+    showDialog(
+      context: context,
+      builder: (BuildContext context) {
+        return AlertDialog(
+          title: Text('Location Permission Denied'),
+          content: Text('Would you like to search for the location manually?'),
+          actions: <Widget>[
+            TextButton(
+              child: Text('Yes'),
+              onPressed: () {
+                Navigator.of(context).pop();
+                _showSearchBar();
+              },
+            ),
+            TextButton(
+              child: Text('Allow location'),
+              onPressed: () async {
+                Navigator.of(context).pop();
+                await Geolocator.openAppSettings();
+              },
+            ),
+            TextButton(
+              child: Text('No'),
+              onPressed: () {
+                Navigator.of(context).pop();
+              },
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  Future<void> _fetchWeatherForCurrentLocation(double lat, double lon) async {
+    try {
+      final weatherData = await _fetchWeatherData('lat=$lat&lon=$lon');
+      setState(() {
+        weather = Future.value(weatherData);
+        cityName =
+            weatherData['city']['name'] + ', ' + weatherData['city']['country'];
+      });
+    } catch (e) {
+      _handleNetworkError(e);
+    }
+  }
+
+  Future<void> _initializeWeatherForLocation(String location) async {
+    setState(() {
+      cityName = location;
+      isCurrentLocation = false;
+    });
+    await _fetchWeatherData(location);
+  }
+
+  // Future<void> _initializeWeatherForLocation(String location) async {
+  //   try {
+  //     var weatherData = await _fetchWeatherData('q=$location');
+  //     setState(() {
+  //       cityName = location;
+  //       weather = Future.value(weatherData);
+  //     });
+  //   } catch (e) {
+  //     _handleNetworkError(e);
   //   }
-
-  //   // Check location permission
-  //   permission = await Geolocator.checkPermission();
-  //   if (permission == LocationPermission.denied) {
-  //     permission = await Geolocator.requestPermission();
-  //     if (permission == LocationPermission.denied) {
-  //       _showLocationPermissionDialog();
-  //       return;
-  //     }
-  //   }
-
-  //   if (permission == LocationPermission.deniedForever) {
-  //     _showLocationPermissionDialog();
-  //     return;
-  //   }
-
-  //   // If permission is granted, fetch current location weather
-  //   await _getCurrentLocation();
   // }
+
+  Future<Map<String, dynamic>> _fetchWeatherData(String query) async {
+    var connectivityResult = await (Connectivity().checkConnectivity());
+    if (connectivityResult == ConnectivityResult.none) {
+      throw TimeoutException('No internet connection');
+    }
+
+    try {
+      final response = await http
+          .get(
+            Uri.parse(
+              'https://api.openweathermap.org/data/2.5/forecast?$query&APPID=$openWeatherAPIKey',
+            ),
+          )
+          .timeout(Duration(seconds: 5));
+
+      if (response.statusCode != 200) {
+        throw Exception('Failed to load weather data: ${response.statusCode}');
+      }
+      return jsonDecode(response.body);
+    } on TimeoutException catch (_) {
+      throw TimeoutException('Failed to load weather data: Connection timeout');
+    } on SocketException catch (_) {
+      throw SocketException(
+          'Failed to load weather data: No internet connection');
+    }
+  }
+
+  Future<void> searchLocation(String query) async {
+    if (query.isEmpty) {
+      setState(() {
+        searchResults = [];
+      });
+      return;
+    }
+
+    try {
+      var connectivityResult = await (Connectivity().checkConnectivity());
+      if (connectivityResult == ConnectivityResult.none) {
+        throw TimeoutException('No internet connection');
+      }
+
+      final response = await http
+          .get(
+            Uri.parse(
+              'https://api.openweathermap.org/geo/1.0/direct?q=$query&limit=5&appid=$openWeatherAPIKey',
+            ),
+          )
+          .timeout(Duration(seconds: 10));
+
+      if (response.statusCode == 200) {
+        List<dynamic> cities = json.decode(response.body);
+        setState(() {
+          searchResults = cities.map((city) {
+            String countryCode = city['country'];
+            String countryName =
+                Country.tryParse(countryCode)?.name ?? countryCode;
+            return "${city['name']}, $countryName";
+          }).toList();
+        });
+      } else {
+        throw Exception('Failed to load search results');
+      }
+    } catch (e) {
+      _handleNetworkError(e);
+    }
+  }
+
+  void _handleNetworkError(dynamic error) {
+    setState(() {
+      _hasNetworkError = true;
+      _isSearching = false; // Ensure search bar is hidden
+      if (error is TimeoutException) {
+        errorMessage =
+            'Connection timed out. Please check your internet connection.';
+      } else if (error is SocketException) {
+        errorMessage =
+            'No internet connection. Please check your network settings.';
+      } else {
+        errorMessage = 'An error occurred. Please try again later.';
+      }
+    });
+    _showNetworkErrorDialog();
+  }
+
+  void _showNetworkErrorDialog() {
+    showDialog(
+      context: context,
+      builder: (BuildContext context) {
+        return AlertDialog(
+          title: Text('Network Error'),
+          content: Text(
+              'To access current data, please check your internet connection.'),
+          actions: <Widget>[
+            TextButton(
+              child: Text('Open Network Settings'),
+              onPressed: () {
+                Navigator.of(context).pop();
+                AppSettings.openAppSettings(type: AppSettingsType.wifi);
+              },
+            ),
+            TextButton(
+              child: Text('Try Again'),
+              onPressed: () {
+                Navigator.of(context).pop();
+                _initializeWeather();
+              },
+            ),
+            TextButton(
+              child: Text('Cancel'),
+              onPressed: () {
+                Navigator.of(context).pop();
+              },
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  Future<void> _loadIsCurrentLocation() async {
+    final prefs = await SharedPreferences.getInstance();
+    setState(() {
+      isCurrentLocation = prefs.getBool('isCurrentLocation') ?? false;
+    });
+  }
+
+  Future<void> _saveIsCurrentLocation(bool value) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool('isCurrentLocation', value);
+  }
+
+  void _showSearchBar() {
+    setState(() {
+      _isSearching = true;
+    });
+  }
+
+// Update the _handleCurrentLocationRequest method
 
   Future<Map<String, dynamic>> getWeatherByCoordinates(
       double lat, double lon) async {
@@ -373,28 +746,6 @@ class WeatherScreenState extends State<WeatherScreen> {
     // NotificationService.checkAndNotify(_currentDes);
   }
 
-  Future<void> _initializeWeatherForLocation(String location) async {
-    setState(() {
-      isLoading = true;
-      errorMessage = '';
-    });
-    try {
-      setState(() {
-        cityName = location;
-        weather = getCurrentWeather(location.split(',')[0]);
-      });
-    } catch (e) {
-      print("Error initializing weather for location: $e");
-      setState(() {
-        errorMessage = 'Failed to fetch weather data. Please try again.';
-      });
-    } finally {
-      setState(() {
-        isLoading = false;
-      });
-    }
-  }
-
   void _handleTemperatureUnitChanged(bool isCelsius) async {
     setState(() {
       _isCelsius = isCelsius;
@@ -415,12 +766,8 @@ class WeatherScreenState extends State<WeatherScreen> {
       _searchController.clear();
       isCurrentLocation = false;
     });
-    await _saveIsCurrentLocation(false); // Save the value
+    await _saveIsCurrentLocation(false);
     _showSaveLocationSnackbar(selectedCity);
-
-    // Save the selected location
-    SharedPreferences prefs = await SharedPreferences.getInstance();
-    await prefs.setString('lastSelectedLocation', selectedCity);
   }
 
   Future<Map<String, dynamic>> getCurrentWeather(String city) async {
@@ -443,40 +790,6 @@ class WeatherScreenState extends State<WeatherScreen> {
     } catch (e) {
       print("Error fetching weather: $e");
       throw Exception('Failed to load weather data');
-    }
-  }
-
-  Future<void> searchLocation(String query) async {
-    if (query.isEmpty) {
-      setState(() {
-        searchResults = [];
-      });
-      return;
-    }
-
-    try {
-      final response = await http.get(
-        Uri.parse(
-            'https://api.openweathermap.org/geo/1.0/direct?q=$query&limit=5&appid=$openWeatherAPIKey'),
-      );
-      if (response.statusCode == 200) {
-        List<dynamic> cities = json.decode(response.body);
-        setState(() {
-          searchResults = cities.map((city) {
-            String countryCode = city['country'];
-            String countryName =
-                Country.tryParse(countryCode)?.name ?? countryCode;
-            return "${city['name']}, $countryName";
-          }).toList();
-        });
-      } else {
-        throw Exception('Failed to load search results');
-      }
-    } catch (e) {
-      print("Error searching location: $e");
-      setState(() {
-        searchResults = ['Error: Could not load search results'];
-      });
     }
   }
 
@@ -542,12 +855,6 @@ class WeatherScreenState extends State<WeatherScreen> {
 
       // Add more customizations as needed
     );
-  }
-
-  void _showSearchBar() {
-    setState(() {
-      _isSearching = true;
-    });
   }
 
   void _handleMenuSelection(String value) {
@@ -617,9 +924,10 @@ class WeatherScreenState extends State<WeatherScreen> {
   }
 
   Widget _buildCurrentWeather(Map<String, dynamic> currentWeatherData) {
-    final tempK = currentWeatherData['main']['temp'];
+    final tempK = currentWeatherData['main']['temp']?.toDouble() ?? 0.0;
     final currentTemp = convertTemperature(tempK, _isCelsius).round();
-    _currentDescription = currentWeatherData['weather'][0]['description'];
+    _currentDescription =
+        currentWeatherData['weather'][0]['description'] ?? 'Unknown';
 
     print('Current weather description: $_currentDescription');
     print('Is current location: $isCurrentLocation');
@@ -647,7 +955,7 @@ class WeatherScreenState extends State<WeatherScreen> {
                   children: [
                     TextSpan(
                       text: '$currentTemp',
-                      style: GoogleFonts.abel(
+                      style: GoogleFonts.acme(
                         textStyle: TextStyle(
                             fontSize: 200,
                             color: AppColors.getTextColor(_isDarkMode)),
@@ -704,7 +1012,7 @@ class WeatherScreenState extends State<WeatherScreen> {
             height: 120,
             child: ListView.builder(
               scrollDirection: Axis.horizontal,
-              itemCount: min(8, list.length),
+              itemCount: min(24, list.length), // Increased to show 24 hours
               itemBuilder: (context, index) {
                 final hourlyWeather = list[index];
                 final temp = convertTemperature(
@@ -714,21 +1022,26 @@ class WeatherScreenState extends State<WeatherScreen> {
                 final weatherIcon = WeatherUtils.getWeatherIcon(
                     hourlyWeather['weather'][0]['main']);
 
-                // Check if current time is within this 3-hour block
-                final isCurrentBlock = now.isAfter(forecastTime) &&
+                // Check if current time is within this hour
+                final isCurrentHour = now.isAfter(forecastTime) &&
                     now.isBefore(forecastTime.add(Duration(hours: 3)));
 
-                // Determine text color based on whether it's the current block
-                final textColor = isCurrentBlock
+                // Determine text color based on whether it's the current hour
+                final textColor = isCurrentHour
                     ? Colors.red
                     : (_isDarkMode ? Colors.white : Colors.black);
+
+                // Use device's locale to determine 12/24 hour format
+                final is24HourFormat =
+                    MediaQuery.of(context).alwaysUse24HourFormat;
+                final timeFormat = is24HourFormat ? 'HH:mm' : 'h:mm a';
 
                 return Padding(
                   padding: const EdgeInsets.symmetric(horizontal: 12.0),
                   child: Column(
                     children: [
                       Text(
-                        DateFormat('ha').format(forecastTime),
+                        DateFormat(timeFormat).format(forecastTime),
                         style: TextStyle(fontSize: 14, color: textColor),
                       ),
                       SizedBox(height: 8),
@@ -757,59 +1070,63 @@ class WeatherScreenState extends State<WeatherScreen> {
     );
   }
 
-  Widget _buildDailyForecast(List forecastList, {bool highlightToday = false}) {
+  Widget _buildDailyForecast(List forecastList, bool highlightToday) {
+    final now = DateTime.now();
+
     return SingleChildScrollView(
-      scrollDirection: Axis.horizontal, // Enable horizontal scrolling
+      scrollDirection: Axis.horizontal,
       child: Row(
         mainAxisAlignment: MainAxisAlignment.center,
         children: List.generate(
-          min(7, (forecastList.length / 8).floor()), // Show the next 7 days
+          min(7, (forecastList.length / 8).floor()),
           (index) {
-            final int calculatedIndex = index * 8; // Start from today
+            final int calculatedIndex = index * 8;
             if (calculatedIndex >= forecastList.length) {
-              return Container(); // Return empty container if index is out of bounds
+              return Container();
             }
 
             final futureWeather = forecastList[calculatedIndex];
-            final temp = (futureWeather['main']['temp'] - 273.15)
-                .round(); // Kelvin to Celsius
+            // Convert the temperature to double before passing it to convertTemperature
+            final temp = convertTemperature(
+                    (futureWeather['main']['temp'] as num).toDouble(),
+                    _isCelsius)
+                .round();
             final date =
                 DateTime.fromMillisecondsSinceEpoch(futureWeather['dt'] * 1000);
 
-            // Check if it's the first item and highlight only when the "Today" tab is clicked
-            final isFirstItem = index == 0 && highlightToday;
+            // Check if this forecast is for today
+            final isToday = date.year == now.year &&
+                date.month == now.month &&
+                date.day == now.day;
 
             return Padding(
               padding: const EdgeInsets.all(22.0),
               child: Column(
                 children: [
                   BoxedIcon(
-                      WeatherUtils.getWeatherIcon(
-                          futureWeather['weather'][0]['main']),
-                      size: 30,
-                      color: isFirstItem
-                          ? Colors.red
-                          : AppColors.getTextColor(_isDarkMode)),
+                    WeatherUtils.getWeatherIcon(
+                        futureWeather['weather'][0]['main']),
+                    size: 30,
+                    color: isToday && highlightToday
+                        ? Colors.red
+                        : AppColors.getTextColor(_isDarkMode),
+                  ),
                   Text(
                     '$temp°',
                     style: GoogleFonts.berkshireSwash(
                       textStyle: TextStyle(
                         fontSize: 20,
-                        fontWeight:
-                            isFirstItem ? FontWeight.bold : FontWeight.normal,
-                        color: isFirstItem
+                        color: isToday && highlightToday
                             ? Colors.red
                             : AppColors.getTextColor(_isDarkMode),
                       ),
                     ),
                   ),
                   Text(
-                    DateFormat('E').format(date),
+                    isToday ? 'Today' : DateFormat('E').format(date),
                     style: TextStyle(
                       fontSize: 14,
-                      fontWeight:
-                          isFirstItem ? FontWeight.bold : FontWeight.normal,
-                      color: isFirstItem
+                      color: isToday && highlightToday
                           ? Colors.red
                           : AppColors.getTextColor(_isDarkMode),
                     ),
@@ -823,9 +1140,6 @@ class WeatherScreenState extends State<WeatherScreen> {
     );
   }
 
-  final GlobalKey<ScaffoldMessengerState> _scaffoldMessengerKey =
-      GlobalKey<ScaffoldMessengerState>();
-
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
@@ -835,389 +1149,303 @@ class WeatherScreenState extends State<WeatherScreen> {
         key: _scaffoldMessengerKey,
         child: Scaffold(
           backgroundColor: AppColors.getbgColor(_isDarkMode),
-          body: Stack(children: [
-            SafeArea(
-              child: isLoading
-                  ? Center(
-                      child: Column(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          CircularProgressIndicator(),
-                          SizedBox(height: 20),
-                          Text(
-                            'Fetching weather data...',
-                            style: TextStyle(
-                              fontSize: 18,
-                              color: _isDarkMode ? Colors.white : Colors.black,
-                            ),
-                          ),
-                        ],
-                      ),
-                    )
-                  : errorMessage.isNotEmpty
-                      ? Center(
-                          child: Text(
-                            errorMessage,
-                            style: TextStyle(
-                              fontSize: 18,
-                              color: Colors.red,
-                            ),
-                          ),
-                        )
-                      : Column(
-                          children: [
-                            _isSearching
-                                ? Padding(
-                                    padding: const EdgeInsets.all(6.0),
-                                    child: TextField(
-                                      controller: _searchController,
-                                      autofocus: true,
-                                      style: TextStyle(
-                                          color: _isDarkMode
-                                              ? Colors.white
-                                              : Colors.black),
-                                      decoration: InputDecoration(
-                                        suffixIcon: IconButton(
-                                          icon: Icon(
-                                              _isSearching
-                                                  ? Icons.close
-                                                  : Icons.search,
-                                              color: _isDarkMode
-                                                  ? Colors.white
-                                                  : Colors.black),
-                                          onPressed: () {
-                                            setState(() {
-                                              _isSearching = !_isSearching;
-                                              if (!_isSearching) {
-                                                _searchController.clear();
-                                                searchResults = [];
-                                                // _initializeWeather(); // If needed
-                                              }
-                                            });
-                                          },
-                                        ),
-                                        hintText: 'Search for a city...',
-                                        hintStyle: TextStyle(
+          body: SafeArea(
+            child: isLoading
+                ? Center(child: CircularProgressIndicator())
+                : _hasNetworkError
+                    ? _buildNetworkErrorWidget()
+                    : _isLocationPermissionDenied
+                        ? _buildLocationPermissionDeniedWidget()
+                        : Column(
+                            children: [
+                              _isSearching
+                                  ? Padding(
+                                      padding: const EdgeInsets.all(6.0),
+                                      child: TextField(
+                                        controller: _searchController,
+                                        autofocus: true,
+                                        style: TextStyle(
                                             color: _isDarkMode
-                                                ? Colors.white60
+                                                ? Colors.white
                                                 : Colors.black),
-                                        border: InputBorder.none,
-                                      ),
-                                      onChanged: (value) {
-                                        searchLocation(value);
-                                      },
-                                    ),
-                                  )
-                                : Row(
-                                    children: [
-                                      Padding(
-                                        padding: const EdgeInsets.only(
-                                            top: 5.0, left: 8.0),
-                                        child: WeatherUtils(
-                                          isDarkMode: _isDarkMode,
-                                          onSelected: _handleMenuSelection,
-                                          onLocationSelected:
-                                              _handleLocationSelected,
-                                        ),
-                                      ),
-                                      Spacer(), // Pushes the theme toggle container to the right
-                                      Padding(
-                                        padding: const EdgeInsets.only(
-                                            top: 5.0, right: 8.0),
-                                        child: Container(
-                                          width: 30, // Adjust width as needed
-                                          height: 60, // Adjust height as needed
-                                          decoration: BoxDecoration(
-                                            boxShadow: [
-                                              BoxShadow(
+                                        decoration: InputDecoration(
+                                          suffixIcon: IconButton(
+                                            icon: Icon(
+                                                _isSearching
+                                                    ? Icons.close
+                                                    : Icons.search,
                                                 color: _isDarkMode
-                                                    ? Colors.grey
-                                                        .withOpacity(0.2)
-                                                    : Colors.black
-                                                        .withOpacity(0.2),
-                                                spreadRadius: 5,
-                                                blurRadius: 7,
-                                                offset: Offset(0, 7),
-                                              ),
-                                            ],
-                                            color: _isDarkMode
-                                                ? Colors.black
-                                                : Colors.white,
-                                            border: Border.all(
+                                                    ? Colors.white
+                                                    : Colors.black),
+                                            onPressed: () {
+                                              setState(() {
+                                                _isSearching = !_isSearching;
+                                                if (!_isSearching) {
+                                                  _searchController.clear();
+                                                  searchResults = [];
+                                                  // _initializeWeather(); // If needed
+                                                }
+                                              });
+                                            },
+                                          ),
+                                          hintText: 'Search for a city...',
+                                          hintStyle: TextStyle(
+                                              color: _isDarkMode
+                                                  ? Colors.white60
+                                                  : Colors.black),
+                                          border: InputBorder.none,
+                                        ),
+                                        onChanged: (value) {
+                                          searchLocation(value);
+                                        },
+                                      ),
+                                    )
+                                  : Row(
+                                      children: [
+                                        Padding(
+                                          padding: const EdgeInsets.only(
+                                              top: 5.0, left: 8.0),
+                                          child: WeatherUtils(
+                                            isDarkMode: _isDarkMode,
+                                            onSelected: _handleMenuSelection,
+                                            onLocationSelected:
+                                                _handleLocationSelected,
+                                          ),
+                                        ),
+                                        Spacer(), // Pushes the theme toggle container to the right
+                                        Padding(
+                                          padding: const EdgeInsets.only(
+                                              top: 5.0, right: 8.0),
+                                          child: Container(
+                                            width: 30, // Adjust width as needed
+                                            height:
+                                                60, // Adjust height as needed
+                                            decoration: BoxDecoration(
+                                              boxShadow: [
+                                                BoxShadow(
+                                                  color: _isDarkMode
+                                                      ? Colors.grey
+                                                          .withOpacity(0.2)
+                                                      : Colors.black
+                                                          .withOpacity(0.2),
+                                                  spreadRadius: 5,
+                                                  blurRadius: 7,
+                                                  offset: Offset(0, 7),
+                                                ),
+                                              ],
                                               color: _isDarkMode
                                                   ? Colors.black
                                                   : Colors.white,
-                                              width: 2.0,
+                                              border: Border.all(
+                                                color: _isDarkMode
+                                                    ? Colors.black
+                                                    : Colors.white,
+                                                width: 2.0,
+                                              ),
+                                              borderRadius:
+                                                  BorderRadius.circular(25),
                                             ),
-                                            borderRadius:
-                                                BorderRadius.circular(25),
-                                          ),
-                                          child: Column(
-                                            mainAxisAlignment:
-                                                MainAxisAlignment.spaceEvenly,
-                                            children: [
-                                              GestureDetector(
-                                                onTap: _isDarkMode
-                                                    ? _toggleTheme
-                                                    : null,
-                                                child: AnimatedOpacity(
-                                                  opacity:
-                                                      _isDarkMode ? 1.0 : 0.3,
-                                                  duration: Duration(
-                                                      milliseconds: 200),
-                                                  child: Icon(
-                                                    Icons.sunny,
-                                                    color: Colors.orange,
-                                                    size: 20,
-                                                  ),
-                                                ),
-                                              ),
-                                              GestureDetector(
-                                                onTap: _isDarkMode
-                                                    ? null
-                                                    : _toggleTheme,
-                                                child: AnimatedOpacity(
-                                                  opacity:
-                                                      _isDarkMode ? 0.3 : 1.0,
-                                                  duration: Duration(
-                                                      milliseconds: 200),
-                                                  child: Icon(
-                                                    Icons.dark_mode,
-                                                    color: const Color.fromARGB(
-                                                        255, 105, 106, 107),
-                                                    size: 20,
-                                                  ),
-                                                ),
-                                              ),
-                                            ],
-                                          ),
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                            if (_isSearching && searchResults.isNotEmpty)
-                              Expanded(
-                                child: ListView.builder(
-                                  itemCount: searchResults.length,
-                                  itemBuilder: (context, index) {
-                                    return ListTile(
-                                      title: Text(searchResults[index]),
-                                      onTap: () {
-                                        selectCity(searchResults[index]);
-                                      },
-                                    );
-                                  },
-                                ),
-                              ),
-                            if (!_isSearching)
-                              Expanded(
-                                  child: FutureBuilder<Map<String, dynamic>>(
-                                future: weather,
-                                builder: (context, snapshot) {
-                                  if (snapshot.connectionState ==
-                                      ConnectionState.waiting) {
-                                    return Center(
-                                        child: CircularProgressIndicator());
-                                  }
-                                  if (snapshot.hasError) {
-                                    return Center(
-                                        child:
-                                            Text('Error: ${snapshot.error}'));
-                                  }
-                                  if (!snapshot.hasData) {
-                                    return Center(
-                                        child: Text('No data available'));
-                                  }
-
-                                  final data = snapshot.data!;
-                                  final list = data['list'] as List;
-                                  final currentWeatherData =
-                                      list.isNotEmpty ? list[0] : null;
-
-                                  final weatherDescription =
-                                      currentWeatherData['weather'][0]
-                                          ['description'];
-
-                                  if (currentWeatherData == null) {
-                                    return Center(
-                                        child:
-                                            Text('No weather data available'));
-                                  }
-                                  _checkDescriptionChange(data);
-                                  // Cast numeric values correctly
-// final forecastList = snapshot.data?['hourly'] as List<dynamic>?;
-                                  final forecastList =
-                                      data['list'] as List<dynamic>? ?? [];
-                                  return Padding(
-                                    padding: const EdgeInsets.all(8.0),
-                                    child: SingleChildScrollView(
-                                      child: Column(
-                                        crossAxisAlignment:
-                                            CrossAxisAlignment.center,
-                                        children: [
-                                          ElevatedButton(
-                                            onPressed: () async {
-                                              NotificationService
-                                                  .checkAndNotify(
-                                                weatherDescription,
-                                              );
-                                              await NotificationService
-                                                  .showNotification(
-                                                id: 0, // Use a simple static ID for testing
-                                                title: 'Test Notification',
-                                                body:
-                                                    'This is a test notification.',
-                                              );
-                                            },
-                                            child:
-                                                Text('Send Test Notification'),
-                                          ),
-
-                                          _buildCurrentWeather(
-                                              currentWeatherData), // Display current weather
-                                          SizedBox(
-                                              height:
-                                                  93.0), // Space between current weather and tabs
-                                          // TabBar for "Today", "Hourly", and "Next 4 Days"
-                                          DefaultTabController(
-                                            length: 3,
                                             child: Column(
+                                              mainAxisAlignment:
+                                                  MainAxisAlignment.spaceEvenly,
                                               children: [
-                                                TabBar(
-                                                  labelColor:
-                                                      AppColors.getTextColor(
-                                                          _isDarkMode),
-                                                  unselectedLabelColor:
-                                                      Colors.grey,
-                                                  indicatorColor: Colors.red,
-                                                  dividerColor: Colors
-                                                      .transparent, // Customize tab indicator colorindicator color
-                                                  tabs: [
-                                                    Tab(text: "Today"),
-                                                    Tab(
-                                                        text:
-                                                            "Hourly Temperature"),
-                                                    Tab(text: "Next 4 Days"),
-                                                  ],
+                                                GestureDetector(
+                                                  onTap: _isDarkMode
+                                                      ? _toggleTheme
+                                                      : null,
+                                                  child: AnimatedOpacity(
+                                                    opacity:
+                                                        _isDarkMode ? 1.0 : 0.3,
+                                                    duration: Duration(
+                                                        milliseconds: 200),
+                                                    child: Icon(
+                                                      Icons.sunny,
+                                                      color: Colors.orange,
+                                                      size: 20,
+                                                    ),
+                                                  ),
                                                 ),
-                                                SizedBox(
-                                                    height:
-                                                        10), // Space between tabs and content
-                                                // TabBarView for displaying the respective content
-                                                Container(
-                                                  height:
-                                                      160, // Set height for forecast content
-                                                  child: TabBarView(
-                                                    children: [
-                                                      _buildDailyForecast(
-                                                          highlightToday: true,
-                                                          forecastList), // Today forecast
-                                                      _buildHourlyForecast(
-                                                          forecastList), // Hourly forecast
-                                                      _buildDailyForecast(
-                                                          forecastList), // Next 4 days forecast
-                                                    ],
+                                                GestureDetector(
+                                                  onTap: _isDarkMode
+                                                      ? null
+                                                      : _toggleTheme,
+                                                  child: AnimatedOpacity(
+                                                    opacity:
+                                                        _isDarkMode ? 0.3 : 1.0,
+                                                    duration: Duration(
+                                                        milliseconds: 200),
+                                                    child: Icon(
+                                                      Icons.dark_mode,
+                                                      color:
+                                                          const Color.fromARGB(
+                                                              255,
+                                                              105,
+                                                              106,
+                                                              107),
+                                                      size: 20,
+                                                    ),
                                                   ),
                                                 ),
                                               ],
                                             ),
                                           ),
-                                        ],
-                                      ),
+                                        ),
+                                      ],
                                     ),
-                                  );
-                                },
-                              )),
-                          ],
-                        ),
-            ),
-          ]),
-        ),
-      ),
-    );
-  }
-}
+                              if (_isSearching && searchResults.isNotEmpty)
+                                Expanded(
+                                  child: ListView.builder(
+                                    itemCount: searchResults.length,
+                                    itemBuilder: (context, index) {
+                                      return ListTile(
+                                        title: Text(searchResults[index]),
+                                        onTap: () {
+                                          selectCity(searchResults[index]);
+                                        },
+                                      );
+                                    },
+                                  ),
+                                ),
+                              if (!_isSearching)
+                                // Your existing weather display widget
+                                Expanded(
+                                    child: FutureBuilder<Map<String, dynamic>>(
+                                  future: weather,
+                                  builder: (context, snapshot) {
+                                    if (snapshot.connectionState ==
+                                        ConnectionState.waiting) {
+                                      return Center(
+                                          child: CircularProgressIndicator());
+                                    }
+                                    if (snapshot.hasError) {
+                                      return Center(
+                                          child:
+                                              Text('Error: ${snapshot.error}'));
+                                    }
+                                    if (!snapshot.hasData) {
+                                      return Center(
+                                          child: Text('No data available'));
+                                    }
 
-class QuadrantHourlyForecast extends StatefulWidget {
-  final List<dynamic> forecasts;
-  final double radius;
+                                    final data = snapshot.data!;
+                                    final list = data['list'] as List;
+                                    final currentWeatherData =
+                                        list.isNotEmpty ? list[0] : null;
 
-  const QuadrantHourlyForecast({
-    Key? key,
-    required this.forecasts,
-    this.radius = 60,
-  }) : super(key: key);
+                                    final weatherDescription =
+                                        currentWeatherData['weather'][0]
+                                            ['description'];
 
-  @override
-  _QuadrantHourlyForecastState createState() => _QuadrantHourlyForecastState();
-}
+                                    if (currentWeatherData == null) {
+                                      return Center(
+                                          child: Text(
+                                              'No weather data available'));
+                                    }
+                                    _checkDescriptionChange(data);
+                                    // Cast numeric values correctly
+// final forecastList = snapshot.data?['hourly'] as List<dynamic>?;
+                                    final forecastList =
+                                        data['list'] as List<dynamic>? ?? [];
+                                    return Padding(
+                                      padding: const EdgeInsets.all(8.0),
+                                      child: SingleChildScrollView(
+                                        child: Column(
+                                          crossAxisAlignment:
+                                              CrossAxisAlignment.center,
+                                          children: [
+                                            ElevatedButton(
+                                              onPressed: () async {
+                                                NotificationService
+                                                    .checkAndNotify(
+                                                  weatherDescription,
+                                                );
+                                                await NotificationService
+                                                    .showNotification(
+                                                  id: 0, // Use a simple static ID for testing
+                                                  title: 'Test Notification',
+                                                  body:
+                                                      'This is a test notification.',
+                                                );
+                                              },
+                                              child: Text(
+                                                  'Send Test Notification'),
+                                            ),
 
-class _QuadrantHourlyForecastState extends State<QuadrantHourlyForecast> {
-  double _rotationAngle = 0.0;
-
-  void _handlePanUpdate(DragUpdateDetails details) {
-    setState(() {
-      _rotationAngle += details.delta.dx * 0.01;
-    });
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Align(
-      alignment: Alignment.bottomRight,
-      child: Container(
-        width: widget.radius * 1, // Reduced size
-        height: widget.radius * 0.8, // Reduced size
-        child: GestureDetector(
-          onPanUpdate: _handlePanUpdate,
-          child: Stack(
-            children: [
-              CustomPaint(
-                size: Size(widget.radius * 2, widget.radius * 2),
-                // painter: QuadrantPainter(),
-              ),
-              ...List.generate(widget.forecasts.length, (index) {
-                final forecast = widget.forecasts[index];
-                final time =
-                    DateTime.fromMillisecondsSinceEpoch(forecast['dt'] * 1000);
-                final temp = (forecast['main']['temp'] - 273.15).round();
-                final weatherMain = forecast['weather'][0]['main'];
-
-                final angle = index * (pi / 4) - _rotationAngle;
-                final x = widget.radius + widget.radius * cos(angle);
-                final y = widget.radius + widget.radius * sin(angle);
-
-                return Positioned(
-                  left: x - 30, // Adjusted for reduced size
-                  top: y - 30, // Adjusted for reduced size
-                  child: Transform.rotate(
-                    angle: angle + pi / 2,
-                    child: Container(
-                      width: 80, // Reduced size
-                      height: 80, // Reduced size
-                      child: Column(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          Text(DateFormat('h a').format(time),
-                              style:
-                                  TextStyle(fontSize: 8)), // Adjusted font size
-                          BoxedIcon(WeatherUtils.getWeatherIcon(weatherMain),
-                              size: 16), // Adjusted icon size
-                          Text('$temp°C',
-                              style:
-                                  TextStyle(fontSize: 8)), // Adjusted font size
-                        ],
-                      ),
-                    ),
-                  ),
-                );
-              }),
-            ],
+                                            _buildCurrentWeather(
+                                                currentWeatherData), // Display current weather
+                                            SizedBox(
+                                                height:
+                                                    93.0), // Space between current weather and tabs
+                                            // TabBar for "Today", "Hourly", and "Next 4 Days"
+                                            DefaultTabController(
+                                              length: 3,
+                                              child: Column(
+                                                children: [
+                                                  TabBar(
+                                                    labelColor:
+                                                        AppColors.getTextColor(
+                                                            _isDarkMode),
+                                                    unselectedLabelColor:
+                                                        Colors.grey,
+                                                    indicatorColor: Colors.red,
+                                                    dividerColor: Colors
+                                                        .transparent, // Customize tab indicator colorindicator color
+                                                    tabs: [
+                                                      Tab(text: "Today"),
+                                                      Tab(
+                                                          text:
+                                                              "Hourly Temperature"),
+                                                      Tab(text: "Next 4 Days"),
+                                                    ],
+                                                  ),
+                                                  SizedBox(
+                                                      height:
+                                                          10), // Space between tabs and content
+                                                  // TabBarView for displaying the respective content
+                                                  Container(
+                                                    height:
+                                                        160, // Set height for forecast content
+                                                    child: TabBarView(
+                                                      children: [
+                                                        _buildDailyForecast(
+                                                            forecastList,
+                                                            true), // Today forecast
+                                                        _buildHourlyForecast(
+                                                            forecastList), // Hourly forecast
+                                                        _buildDailyForecast(
+                                                            forecastList,
+                                                            false), // Next 4 days forecast
+                                                      ],
+                                                    ),
+                                                  ),
+                                                ],
+                                              ),
+                                            ),
+                                          ],
+                                        ),
+                                      ),
+                                    );
+                                  },
+                                )),
+                              // if (!_isLocationServiceEnabled &&
+                              //     isCurrentLocation)
+                              //   Padding(
+                              //     padding: const EdgeInsets.all(8.0),
+                              //     child: Text(
+                              //       'Location services are disabled. Tap here to enable.',
+                              //       style: TextStyle(color: Colors.red),
+                              //     ),
+                              //   ),
+                            ],
+                          ),
           ),
         ),
       ),
     );
   }
+
+  final GlobalKey<ScaffoldMessengerState> _scaffoldMessengerKey =
+      GlobalKey<ScaffoldMessengerState>();
 }
 
 class AppColors {
@@ -1235,139 +1463,3 @@ class AppColors {
     return isDarkMode ? Colors.white : Colors.black;
   }
 }
-// import 'package:flutter/material.dart';
-// import 'package:geolocator/geolocator.dart';
-// // ... (other imports remain the same)
-
-// class WeatherScreenState extends State<WeatherScreen> {
-//   // ... (existing properties remain the same)
-
-//   @override
-//   void initState() {
-//     super.initState();
-//     loadSavedPreferences().then(() {
-//       _initializeWeather();
-//     });
-//     NotificationService.initialize();
-//   }
-
-//   Future<void> _initializeWeather() async {
-//     setState(() {
-//       isLoading = true;
-//       errorMessage = '';
-//     });
-//     try {
-//       if (widget.location != null && widget.location!.isNotEmpty) {
-//         await _initializeWeatherForLocation(widget.location!);
-//       } else {
-//         await _handleLocationPermission();
-//       }
-//     } catch (e) {
-//       print("Error initializing weather: $e");
-//       _showSearchBar();
-//     } finally {
-//       setState(() {
-//         isLoading = false;
-//       });
-//     }
-//   }
-
-//   Future<void> _handleLocationPermission() async {
-//     bool serviceEnabled;
-//     LocationPermission permission;
-
-//     // Check if location services are enabled
-//     serviceEnabled = await Geolocator.isLocationServiceEnabled();
-//     if (!serviceEnabled) {
-//       _showLocationServiceDialog();
-//       return;
-//     }
-
-//     // Check location permission
-//     permission = await Geolocator.checkPermission();
-//     if (permission == LocationPermission.denied) {
-//       permission = await Geolocator.requestPermission();
-//       if (permission == LocationPermission.denied) {
-//         _showLocationPermissionDialog();
-//         return;
-//       }
-//     }
-
-//     if (permission == LocationPermission.deniedForever) {
-//       _showLocationPermissionDialog();
-//       return;
-//     }
-
-//     // If permission is granted, fetch current location weather
-//     await _getCurrentLocation();
-//   }
-
-//   void _showLocationServiceDialog() {
-//     showDialog(
-//       context: context,
-//       builder: (BuildContext context) {
-//         return AlertDialog(
-//           title: Text('Location Services Disabled'),
-//           content: Text('Please enable location services to use this feature.'),
-//           actions: <Widget>[
-//             TextButton(
-//               child: Text('Open Settings'),
-//               onPressed: () {
-//                 Navigator.of(context).pop();
-//                 Geolocator.openLocationSettings();
-//               },
-//             ),
-//             TextButton(
-//               child: Text('Cancel'),
-//               onPressed: () {
-//                 Navigator.of(context).pop();
-//                 _showSearchBar();
-//               },
-//             ),
-//           ],
-//         );
-//       },
-//     );
-//   }
-
-//   void _showLocationPermissionDialog() {
-//     showDialog(
-//       context: context,
-//       builder: (BuildContext context) {
-//         return AlertDialog(
-//           title: Text('Location Permission Required'),
-//           content: Text('Please allow location access to get current weather data.'),
-//           actions: <Widget>[
-//             TextButton(
-//               child: Text('Allow'),
-//               onPressed: () {
-//                 Navigator.of(context).pop();
-//                 _handleLocationPermission();
-//               },
-//             ),
-//             TextButton(
-//               child: Text('Deny'),
-//               onPressed: () {
-//                 Navigator.of(context).pop();
-//                 _showSearchBar();
-//               },
-//             ),
-//           ],
-//         );
-//       },
-//     );
-//   }
-
-//   void _showSearchBar() {
-//     setState(() {
-//       _isSearching = true;
-//     });
-//   }
-
-//   // ... (other methods remain the same)
-
-//   @override
-//   Widget build(BuildContext context) {
-//     // ... (existing build method remains the same)
-//   }
-// }

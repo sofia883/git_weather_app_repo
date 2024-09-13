@@ -41,7 +41,8 @@ class SettingsPageState extends State<SettingsPage> {
     SharedPreferences prefs = await SharedPreferences.getInstance();
     await prefs.setBool('isCelsius', _isCelsius);
     await prefs.setString('theme', _selectedTheme);
-    await prefs.setBool('notificationsEnabled', _notificationsEnabled);
+    
+     await prefs.setBool('notificationsEnabled', _notificationsEnabled); // Save this
   }
 
   void _navigateToProfilePage() {
@@ -180,7 +181,7 @@ class SettingsPageState extends State<SettingsPage> {
       onChanged: (bool value) {
         setState(() {
           _notificationsEnabled = value;
-          _saveSettings();
+          _saveSettings(); // Save the updated notification setting
         });
       },
     );

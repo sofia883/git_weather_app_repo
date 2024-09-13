@@ -78,6 +78,8 @@ class _PreferencesPageState extends State<PreferencesPage> {
   String newPreference = '';
   List<String> _savedPreferences = [];
   bool _showAllSavedPreferences = false;
+
+  bool _showAllSavedLocations = false;
   List<String> _savedLocations = [];
   bool isCurrentLocation = false;
   @override
@@ -238,135 +240,21 @@ class _PreferencesPageState extends State<PreferencesPage> {
                 'Saved Locations:',
                 style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
               ),
-              _savedLocations.isNotEmpty
-                  ? Column(
-                      children: _savedLocations.map((location) {
-                        return ListTile(
-                          title: Text(location),
-                          trailing: Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              IconButton(
-                                icon:
-                                    Icon(Icons.visibility, color: Colors.blue),
-                                onPressed: () {
-                                  widget.onLocationSelected(location);
-                                  Navigator.push(
-                                    context,
-                                    MaterialPageRoute(
-                                      builder: (context) =>
-                                          WeatherScreen(location: location),
-                                    ),
-                                  );
-                                },
-                              ),
-                              IconButton(
-                                icon: Icon(Icons.delete),
-                                onPressed: () =>
-                                    _confirmRemoveLocation(location),
-                              ),
-                            ],
-                          ),
-                        );
-                      }).toList(),
-                    )
-                  : Text('No saved locations'),
+              _buildSavedLocations(),
               SizedBox(height: 20),
               Text(
                 'Saved Weather Preferences:',
                 style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
               ),
               SizedBox(height: 10),
-              _savedPreferences.isNotEmpty
-                  ? Column(
-                      children: _getDisplayedSavedPreferences()
-                          .map((condition) => Container(
-                                margin: const EdgeInsets.only(bottom: 8.0),
-                                decoration: BoxDecoration(
-                                  color: Colors.black,
-                                  borderRadius: BorderRadius.circular(8.0),
-                                ),
-                                child: ListTile(
-                                  title: Text(condition),
-                                  trailing: IconButton(
-                                    icon: Icon(Icons.delete),
-                                    onPressed: () {
-                                      _confirmRemovePreference(condition);
-                                    },
-                                  ),
-                                ),
-                              ))
-                          .toList(),
-                    )
-                  : Center(child: Text('No saved preferences')),
-              SizedBox(height: 10),
-              if (_savedPreferences.length > 4)
-                TextButton(
-                  onPressed: () {
-                    setState(() {
-                      _showAllSavedPreferences = !_showAllSavedPreferences;
-                    });
-                  },
-                  child: Text(
-                    _showAllSavedPreferences ? 'Show Less' : 'See More',
-                    style: TextStyle(color: Colors.black),
-                  ),
-                ),
+              _buildSavedPreferences(),
               SizedBox(height: 20),
               Text(
                 'Set Weather Alerts:',
                 style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
               ),
               SizedBox(height: 10),
-              Container(
-                width: 260,
-                padding: EdgeInsets.symmetric(horizontal: 12),
-                decoration: BoxDecoration(
-                  border: Border.all(color: Colors.grey),
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: DropdownButtonHideUnderline(
-                  child: DropdownButton<String>(
-                    isExpanded: true,
-                    hint: Text('Select weather condition'),
-                    value: _selectedCondition,
-                    onChanged: (value) {
-                      if (value != null && !_savedPreferences.contains(value)) {
-                        setState(() {
-                          _selectedCondition = value;
-                        });
-                      }
-                    },
-                    items: _weatherConditions.map((condition) {
-                      bool isSaved = _savedPreferences.contains(condition);
-                      return DropdownMenuItem<String>(
-                        value: condition,
-                        child: Row(
-                          children: [
-                            Expanded(child: Text(condition)),
-                            if (isSaved)
-                              Padding(
-                                padding: const EdgeInsets.only(left: 8.0),
-                                child: Text(
-                                  'Saved',
-                                  style: TextStyle(color: Colors.grey),
-                                ),
-                              ),
-                          ],
-                        ),
-                        enabled: !isSaved,
-                      );
-                    }).toList(),
-                    selectedItemBuilder: (BuildContext context) {
-                      return _weatherConditions.map<Widget>((String item) {
-                        return Text(item);
-                      }).toList();
-                    },
-                    itemHeight: 48,
-                    menuMaxHeight: 48.0 * 7, // Show 7 items at a time
-                  ),
-                ),
-              ),
+              _buildWeatherAlertDropdown(),
               SizedBox(height: 20),
               ElevatedButton(
                 onPressed: () {
@@ -387,11 +275,179 @@ class _PreferencesPageState extends State<PreferencesPage> {
     );
   }
 
-  List<String> _getDisplayedSavedPreferences() {
-    if (_showAllSavedPreferences || _savedPreferences.length <= 4) {
-      return _savedPreferences;
+  Widget _buildSavedLocations() {
+    if (_savedLocations.isEmpty) {
+      return Text('No saved locations');
     }
-    return _savedPreferences.take(4).toList();
+
+    List<String> displayedLocations = _showAllSavedLocations
+        ? _savedLocations
+        : _savedLocations.take(3).toList();
+
+    return Column(
+      children: [
+        ...displayedLocations.map((location) => _buildLocationTile(location)),
+        if (_savedLocations.length > 3)
+          TextButton(
+            onPressed: () {
+              setState(() {
+                _showAllSavedLocations = !_showAllSavedLocations;
+              });
+            },
+            child: Text(
+              _showAllSavedLocations ? 'Show Less' : 'See More',
+              style: TextStyle(color: Colors.black),
+            ),
+          ),
+      ],
+    );
+  }
+
+  Widget _buildLocationTile(String location) {
+    return ListTile(
+      title: Text(location),
+      trailing: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          IconButton(
+            icon: Icon(Icons.delete),
+            onPressed: () => _confirmRemoveLocation(location),
+          ),
+        ],
+      ),
+      onTap: () {
+        widget.onLocationSelected(location);
+        Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (context) => WeatherScreen(location: location),
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildPreferenceTile(String condition) {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 8.0),
+      decoration: BoxDecoration(
+        color: Colors.black,
+        borderRadius: BorderRadius.circular(8.0),
+      ),
+      child: ListTile(
+        title: Text(condition, style: TextStyle(color: Colors.white)),
+        trailing: IconButton(
+          icon: Icon(Icons.delete, color: Colors.white),
+          onPressed: () => _confirmRemovePreference(condition),
+        ),
+        onTap: () {
+          Navigator.push(
+            context,
+            MaterialPageRoute(
+              builder: (context) => WeatherScreen(location: condition),
+            ),
+          );
+        },
+      ),
+    );
+  }
+
+  Widget _buildSavedPreferences() {
+    if (_savedPreferences.isEmpty) {
+      return Center(child: Text('No saved preferences'));
+    }
+
+    List<String> displayedPreferences = _showAllSavedPreferences
+        ? _savedPreferences
+        : _savedPreferences.take(3).toList();
+
+    return Column(
+      children: [
+        ...displayedPreferences
+            .map((condition) => _buildPreferenceTile(condition)),
+        if (_savedPreferences.length > 3)
+          TextButton(
+            onPressed: () {
+              setState(() {
+                _showAllSavedPreferences = !_showAllSavedPreferences;
+              });
+            },
+            child: Text(
+              _showAllSavedPreferences ? 'Show Less' : 'See More',
+              style: TextStyle(color: Colors.black),
+            ),
+          ),
+      ],
+    );
+  }
+
+  // Widget _buildPreferenceTile(String condition) {
+  //   return Container(
+  //     margin: const EdgeInsets.only(bottom: 8.0),
+  //     decoration: BoxDecoration(
+  //       color: Colors.black,
+  //       borderRadius: BorderRadius.circular(8.0),
+  //     ),
+  //     child: ListTile(
+  //       title: Text(condition, style: TextStyle(color: Colors.white)),
+  //       trailing: IconButton(
+  //         icon: Icon(Icons.delete, color: Colors.white),
+  //         onPressed: () => _confirmRemovePreference(condition),
+  //       ),
+  //     ),
+  //   );
+  // }
+
+  Widget _buildWeatherAlertDropdown() {
+    return Container(
+      width: 260,
+      padding: EdgeInsets.symmetric(horizontal: 12),
+      decoration: BoxDecoration(
+        border: Border.all(color: Colors.grey),
+        borderRadius: BorderRadius.circular(18),
+      ),
+      child: DropdownButtonHideUnderline(
+        child: DropdownButton<String>(
+          isExpanded: true,
+          hint: Text('Select weather condition'),
+          value: _selectedCondition,
+          onChanged: (value) {
+            if (value != null && !_savedPreferences.contains(value)) {
+              setState(() {
+                _selectedCondition = value;
+              });
+            }
+          },
+          items: _weatherConditions.map((condition) {
+            bool isSaved = _savedPreferences.contains(condition);
+            return DropdownMenuItem<String>(
+              value: condition,
+              child: Row(
+                children: [
+                  Expanded(child: Text(condition)),
+                  if (isSaved)
+                    Padding(
+                      padding: const EdgeInsets.only(left: 8.0),
+                      child: Text(
+                        'Saved',
+                        style: TextStyle(color: Colors.grey),
+                      ),
+                    ),
+                ],
+              ),
+              enabled: !isSaved,
+            );
+          }).toList(),
+          selectedItemBuilder: (BuildContext context) {
+            return _weatherConditions.map<Widget>((String item) {
+              return Text(item);
+            }).toList();
+          },
+          itemHeight: 48,
+          menuMaxHeight: 48.0 * 7,
+        ),
+      ),
+    );
   }
 
   void _confirmRemovePreference(String condition) {
