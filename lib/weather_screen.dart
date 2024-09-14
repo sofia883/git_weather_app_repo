@@ -293,7 +293,6 @@ class WeatherScreenState extends State<WeatherScreen> {
     }
   }
 
- 
   Future<void> _checkConnectivity() async {
     var connectivityResult = await (Connectivity().checkConnectivity());
     if (connectivityResult == ConnectivityResult.none) {
@@ -319,7 +318,6 @@ class WeatherScreenState extends State<WeatherScreen> {
     // If we have permission, try to get the current location
     await _getCurrentLocation();
   }
-
 
   void _handleError(dynamic error) {
     setState(() {
@@ -353,6 +351,7 @@ class WeatherScreenState extends State<WeatherScreen> {
     });
 
     try {
+      await _loadSavedPreferences();
 
       await _checkConnectivity();
       if (widget.location != null && widget.location!.isNotEmpty) {
@@ -370,7 +369,6 @@ class WeatherScreenState extends State<WeatherScreen> {
         isLoading = false;
       });
     }
-   
   }
 
   Future<void> _refreshCurrentLocationWeather() async {
@@ -390,7 +388,6 @@ class WeatherScreenState extends State<WeatherScreen> {
     }
   }
 
- 
   Widget _buildNetworkErrorWidget() {
     return Center(
       child: Column(

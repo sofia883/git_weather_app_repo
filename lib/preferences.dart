@@ -327,31 +327,6 @@ class _PreferencesPageState extends State<PreferencesPage> {
     );
   }
 
-  Widget _buildPreferenceTile(String condition) {
-    return Container(
-      margin: const EdgeInsets.only(bottom: 8.0),
-      decoration: BoxDecoration(
-        color: Colors.black,
-        borderRadius: BorderRadius.circular(8.0),
-      ),
-      child: ListTile(
-        title: Text(condition, style: TextStyle(color: Colors.white)),
-        trailing: IconButton(
-          icon: Icon(Icons.delete, color: Colors.white),
-          onPressed: () => _confirmRemovePreference(condition),
-        ),
-        onTap: () {
-          Navigator.push(
-            context,
-            MaterialPageRoute(
-              builder: (context) => WeatherScreen(location: condition),
-            ),
-          );
-        },
-      ),
-    );
-  }
-
   Widget _buildSavedPreferences() {
     if (_savedPreferences.isEmpty) {
       return Center(child: Text('No saved preferences'));
@@ -381,22 +356,22 @@ class _PreferencesPageState extends State<PreferencesPage> {
     );
   }
 
-  // Widget _buildPreferenceTile(String condition) {
-  //   return Container(
-  //     margin: const EdgeInsets.only(bottom: 8.0),
-  //     decoration: BoxDecoration(
-  //       color: Colors.black,
-  //       borderRadius: BorderRadius.circular(8.0),
-  //     ),
-  //     child: ListTile(
-  //       title: Text(condition, style: TextStyle(color: Colors.white)),
-  //       trailing: IconButton(
-  //         icon: Icon(Icons.delete, color: Colors.white),
-  //         onPressed: () => _confirmRemovePreference(condition),
-  //       ),
-  //     ),
-  //   );
-  // }
+  Widget _buildPreferenceTile(String condition) {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 8.0),
+      decoration: BoxDecoration(
+        color: Colors.black,
+        borderRadius: BorderRadius.circular(8.0),
+      ),
+      child: ListTile(
+        title: Text(condition, style: TextStyle(color: Colors.white)),
+        trailing: IconButton(
+          icon: Icon(Icons.delete, color: Colors.white),
+          onPressed: () => _confirmRemovePreference(condition),
+        ),
+      ),
+    );
+  }
 
   Widget _buildWeatherAlertDropdown() {
     return Container(

@@ -4,6 +4,8 @@ import 'package:weather_icons/weather_icons.dart';
 import 'package:fl_chart/fl_chart.dart';
 import 'dart:math';
 import 'package:geolocator/geolocator.dart';
+import 'package:connectivity_plus/connectivity_plus.dart';
+import 'package:internet_connection_checker/internet_connection_checker.dart';
 
 class WeatherUtils extends StatelessWidget {
   final bool isDarkMode;
@@ -190,9 +192,6 @@ class WeatherUtils extends StatelessWidget {
 // }
 // //import 'dart:math';
 
-
-
-
 // // class QuadrantHourlyForecast extends StatefulWidget {
 // //   final List<dynamic> forecasts;
 // //   final double radius;
@@ -324,4 +323,24 @@ class WeatherUtils extends StatelessWidget {
 
 // //   @override
 // //   bool shouldRepaint(CustomPainter oldDelegate) => true;
-// // }
+// }
+
+class NetworkHelper {
+  static Future<bool> isInternetAvailable() async {
+    try {
+      var connectivityResult = await (Connectivity().checkConnectivity());
+      if (connectivityResult == ConnectivityResult.none) {
+        debugPrint('NetworkHelper: No connectivity');
+        return false;
+      }
+      
+      // Double-check internet connectivity
+      bool result = await InternetConnectionChecker().hasConnection;
+      debugPrint('NetworkHelper: Internet available: $result');
+      return result;
+    } catch (e) {
+      debugPrint('NetworkHelper: Error checking internet: $e');
+      return false;
+    }
+  }
+}
