@@ -1,8 +1,9 @@
 import 'package:flutter/material.dart';
 // import 'package:weather_icons/weather_icons.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:weather_app/weather_screen.dart';
 // import 'methods.dart';
-import 'weather_screen.dart';
+// import 'weather_screen.dart';
 import 'notification_service.dart';
 import 'package:geolocator/geolocator.dart';
 
@@ -82,6 +83,7 @@ class _PreferencesPageState extends State<PreferencesPage> {
   bool _showAllSavedLocations = false;
   List<String> _savedLocations = [];
   bool isCurrentLocation = false;
+  LastAttemptedAction? _lastAttemptedAction;
   @override
   void initState() {
     super.initState();
@@ -315,7 +317,28 @@ class _PreferencesPageState extends State<PreferencesPage> {
           ),
         ],
       ),
-      onTap: () {
+      onTap: () async {
+        // Set the last attempted location as the saved preference
+        String lastAttemptLocation = location;
+
+        // Save this location in SharedPreferences
+        final prefs = await SharedPreferences.getInstance();
+        List<String> updatedPreferences =
+            prefs.getStringList('savedPreferences') ?? [];
+        if (!updatedPreferences.contains(lastAttemptLocation)) {
+          updatedPreferences.add(lastAttemptLocation);
+        }
+
+        await prefs.setStringList('savedPreferences', updatedPreferences);
+        await prefs.setString('lastAttemptLocation', lastAttemptLocation);
+
+        // Optionally, update the state or show a confirmation Snackbar
+        setState(() {
+          _savedPreferences = updatedPreferences;
+        });
+        _showSaveConfirmationSnackbar();
+
+        // Continue with the navigation or other actions
         widget.onLocationSelected(location);
         Navigator.push(
           context,

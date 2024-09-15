@@ -19,10 +19,14 @@ import 'notification_service.dart';
 import 'package:app_settings/app_settings.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
 
+enum LastAttemptedAction { currentLocation, savedPreference, search }
+
 class WeatherScreen extends StatefulWidget {
   final String? location;
+  final LastAttemptedAction? lastAttemptedAction;
 
-  const WeatherScreen({Key? key, this.location}) : super(key: key);
+  const WeatherScreen({Key? key, this.location, this.lastAttemptedAction})
+      : super(key: key);
 
   // const WeatherScreen({Key? key}) : super(key: key);
 
@@ -31,6 +35,7 @@ class WeatherScreen extends StatefulWidget {
 }
 
 class WeatherScreenState extends State<WeatherScreen> {
+  LastAttemptedAction? _lastAttemptedAction;
   Future<Map<String, dynamic>>? weather;
   String cityName = 'Current Location';
   List<String> searchResults = [];
@@ -52,13 +57,7 @@ class WeatherScreenState extends State<WeatherScreen> {
   double? lastKnownLatitude;
   double? lastKnownLongitude;
   StreamSubscription<ServiceStatus>? _locationServiceStatusSubscription;
-
-  @override
-  void initState() {
-    super.initState();
-
-    _initializeApp();
-  }
+  LastAttemptedAction? lastAttemptLocation;
 
   @override
   void dispose() {
@@ -67,7 +66,33 @@ class WeatherScreenState extends State<WeatherScreen> {
     super.dispose();
   }
 
-  Future<void> _initializeApp() async {
+  @override
+  void initState() {
+    super.initState();
+    _loadSavedPreferences().then((_) {
+      _initializeAppp();
+    });
+  }
+
+  void _handleError(dynamic error, LastAttemptedAction action) {
+    setState(() {
+      isLoading = false;
+      _lastAttemptedAction = action;
+      if (error is SocketException || error is TimeoutException) {
+        _hasNetworkError = true;
+        errorMessage =
+            'No internet connection. Please check your network settings.';
+      } else if (error.toString().contains('Location')) {
+        _isLocationPermissionDenied = true;
+        errorMessage = error.toString();
+      } else {
+        errorMessage = 'An unexpected error occurred. Please try again.';
+      }
+    });
+    _showNetworkErrorDialog();
+  }
+
+  Future<void> _initializeAppp() async {
     setState(() {
       isLoading = true;
       errorMessage = '';
@@ -76,28 +101,68 @@ class WeatherScreenState extends State<WeatherScreen> {
 
     try {
       await _checkConnectivity();
-      await _checkLocationService();
-      await _handleLocationPermission();
       await _loadSavedPreferences();
+
+      if (widget.location != null && widget.location!.isNotEmpty) {
+        await _initializeWeatherForLocation(widget.location!);
+      } else if (_savedPreferences.isNotEmpty) {
+        await _initializeWeatherForLocation(_savedPreferences.first);
+      } else {
+        await _handleCurrentLocationRequest();
+      }
+      _lastAttemptedAction = LastAttemptedAction.currentLocation;
     } catch (e) {
-      _handleError(e);
+      _handleError(e, LastAttemptedAction.currentLocation);
     } finally {
-      // _loadSavedPreferences();
       setState(() {
         isLoading = false;
       });
     }
   }
 
-  void _listenForLocationServiceChanges() {
-    _locationServiceStatusSubscription =
-        Geolocator.getServiceStatusStream().listen((ServiceStatus status) {
-      if (status == ServiceStatus.disabled) {
-        _handleLocationServiceDisabled();
-      } else if (status == ServiceStatus.enabled) {
-        _handleLocationServiceEnabled();
-      }
+  // Future<void> _initializeApp() async {
+  //   setState(() {
+  //     isLoading = true;
+  //     errorMessage = '';
+  //     _hasNetworkError = false;
+  //   });
+
+  //   try {
+  //     await _checkConnectivity();
+  //     await _checkLocationService();
+  //     await _handleLocationPermission();
+  //     await _loadSavedPreferences();
+  //     if (widget.location != null && widget.location!.isNotEmpty) {
+  //       await _initializeWeatherForLocation(widget.location!);
+  //     } else if (_savedPreferences.isNotEmpty) {
+  //       await _initializeWeatherForLocation(_savedPreferences.first);
+  //     } else {
+  //       await _handleCurrentLocationRequest();
+  //     }
+  //     _lastAttemptedAction = LastAttemptedAction.currentLocation;
+  //     // await _getCurrentLocation();
+  //   } catch (e) {
+  //     _handleError(e, LastAttemptedAction.currentLocation);
+  //   } finally {
+  //     setState(() {
+  //       isLoading = false;
+  //     });
+  //   }
+  // }
+
+  Future<void> _initializeWeatherForLocation(String location) async {
+    setState(() {
+      cityName = location;
+      isCurrentLocation = false;
     });
+    try {
+      final weatherData = await _fetchWeatherData('q=$location');
+      setState(() {
+        weather = Future.value(weatherData);
+      });
+    } catch (e) {
+      _handleErroor(e);
+    }
   }
 
   void _showLocationServiceDisabledDialog() {
@@ -319,7 +384,7 @@ class WeatherScreenState extends State<WeatherScreen> {
     await _getCurrentLocation();
   }
 
-  void _handleError(dynamic error) {
+  void _handleErroor(dynamic error) {
     setState(() {
       isLoading = false;
       if (error is SocketException || error is TimeoutException) {
@@ -351,8 +416,6 @@ class WeatherScreenState extends State<WeatherScreen> {
     });
 
     try {
-      await _loadSavedPreferences();
-
       await _checkConnectivity();
       if (widget.location != null && widget.location!.isNotEmpty) {
         await _initializeWeatherForLocation(widget.location!);
@@ -363,7 +426,7 @@ class WeatherScreenState extends State<WeatherScreen> {
         await _handleCurrentLocationRequest();
       }
     } catch (e) {
-      _handleError(e);
+      _handleErroor(e);
     } finally {
       setState(() {
         isLoading = false;
@@ -380,7 +443,7 @@ class WeatherScreenState extends State<WeatherScreen> {
       await _fetchWeatherForCurrentLocation(
           lastKnownLatitude!, lastKnownLongitude!);
     } catch (e) {
-      _handleError(e);
+      _handleErroor(e);
     } finally {
       setState(() {
         isLoading = false;
@@ -402,11 +465,50 @@ class WeatherScreenState extends State<WeatherScreen> {
             onPressed: _showNetworkErrorDialog,
             child: Text('Check Network Connection'),
           ),
+          SizedBox(height: 20),
+          ElevatedButton(
+            onPressed: () {
+              _initializeAppp();
+            },
+            child: Text('Try Again'),
+          ),
         ],
       ),
     );
   }
 
+  Future<void> _loadSavedPreferences() async {
+    // print(lastAttemptLocation);
+    final prefs = await SharedPreferences.getInstance();
+    setState(() {
+      _savedPreferences = prefs.getStringList('savedPreferences') ?? [];
+      // lastAttemptLocation = prefs.getString('lastAttemptLocation') ?? '';
+      lastAttemptLocation = LastAttemptedAction.savedPreference;
+      // Optional: Use lastAttemptLocation as needed
+    });
+  }
+
+  void selectCity(String selectedCity) async {
+    setState(() {
+      cityName = selectedCity;
+      weather = getCurrentWeather(selectedCity.split(',')[0]);
+      searchResults = [];
+      _isSearching = false;
+      _searchController.clear();
+      isCurrentLocation = false;
+    });
+    await _saveIsCurrentLocation(false);
+    _showSaveLocationSnackbar(selectedCity);
+  }
+
+  void _handleLocationSelected(String location) {
+    setState(() {
+      cityName = location;
+      weather = getCurrentWeather(location.split(',')[0]);
+    });
+  }
+
+  // ... other existing methods ...
   Widget _buildLocationPermissionDeniedWidget() {
     return Center(
       child: Column(
@@ -439,14 +541,6 @@ class WeatherScreenState extends State<WeatherScreen> {
         ],
       ),
     );
-  }
-
-  Future<void> _loadSavedPreferences() async {
-    final prefs = await SharedPreferences.getInstance();
-    setState(() {
-      _savedPreferences = prefs.getStringList('savedPreferences') ?? [];
-    });
-    // NotificationService.checkAndNotify(_currentDes);
   }
 
   void _handleOtherErrors(dynamic e) {
@@ -503,14 +597,6 @@ class WeatherScreenState extends State<WeatherScreen> {
     }
   }
 
-  Future<void> _initializeWeatherForLocation(String location) async {
-    setState(() {
-      cityName = location;
-      isCurrentLocation = false;
-    });
-    await _fetchWeatherData(location);
-  }
-
   // Future<void> _initializeWeatherForLocation(String location) async {
   //   try {
   //     var weatherData = await _fetchWeatherData('q=$location');
@@ -551,6 +637,7 @@ class WeatherScreenState extends State<WeatherScreen> {
   }
 
   Future<void> searchLocation(String query) async {
+    _lastAttemptedAction = LastAttemptedAction.search;
     if (query.isEmpty) {
       setState(() {
         searchResults = [];
@@ -586,7 +673,7 @@ class WeatherScreenState extends State<WeatherScreen> {
         throw Exception('Failed to load search results');
       }
     } catch (e) {
-      _handleNetworkError(e);
+      _handleError(e, LastAttemptedAction.search);
     }
   }
 
@@ -627,7 +714,7 @@ class WeatherScreenState extends State<WeatherScreen> {
               child: Text('Try Again'),
               onPressed: () {
                 Navigator.of(context).pop();
-                _initializeWeather();
+                _initializeAppp();
               },
             ),
             TextButton(
@@ -754,19 +841,6 @@ class WeatherScreenState extends State<WeatherScreen> {
     // Reload weather for the current location
   }
 
-  void selectCity(String selectedCity) async {
-    setState(() {
-      cityName = selectedCity;
-      weather = getCurrentWeather(selectedCity.split(',')[0]);
-      searchResults = [];
-      _isSearching = false;
-      _searchController.clear();
-      isCurrentLocation = false;
-    });
-    await _saveIsCurrentLocation(false);
-    _showSaveLocationSnackbar(selectedCity);
-  }
-
   Future<Map<String, dynamic>> getCurrentWeather(String city) async {
     try {
       final res = await http.get(
@@ -823,13 +897,6 @@ class WeatherScreenState extends State<WeatherScreen> {
     } else {
       print('Location already saved');
     }
-  }
-
-  void _handleLocationSelected(String location) {
-    setState(() {
-      cityName = location;
-      weather = getCurrentWeather(location.split(',')[0]);
-    });
   }
 
   ThemeData get _lightTheme {
