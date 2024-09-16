@@ -25,7 +25,7 @@ class NotificationService {
     await Workmanager().registerPeriodicTask(
       "weatherCheck",
       "checkWeather",
-      frequency: Duration(minutes: 15),
+      frequency: Duration(seconds: 15),
       inputData: {'lastRun': DateTime.now().toIso8601String()},
       existingWorkPolicy: ExistingWorkPolicy.replace,
     );
@@ -61,46 +61,52 @@ class NotificationService {
     }
   }
 
-  // The checkAndNotify method will also ensure that notifications are only sent when enabled
   static Future<void> checkAndNotify(String currentWeather) async {
     final prefs = await SharedPreferences.getInstance();
     bool notificationsEnabled = prefs.getBool('notificationsEnabled') ?? true;
 
     if (notificationsEnabled) {
-      List<String> savedPreferences =
-          prefs.getStringList('savedPreferences') ?? [];
-      String? lastNotifiedDescription =
-          prefs.getString('lastNotifiedDescription');
+      List<String> savedAlerts = prefs.getStringList('savedAlerts') ?? [];
+      String? lastNotifiedWeather = prefs.getString('lastNotifiedWeather');
 
-      if (savedPreferences.contains(currentWeather) &&
-          currentWeather != lastNotifiedDescription) {
+      // Check if current weather matches any saved alert
+      if (savedAlerts.contains(currentWeather) &&
+          currentWeather != lastNotifiedWeather) {
         await showNotification(
           id: DateTime.now().millisecond,
           title: 'Weather Alert',
           body:
-              'Current weather condition "$currentWeather" matches your saved preference!',
+              '"$currentWeather" detected in your area. Stay informed and take precautions!',
         );
-        await prefs.setString('lastNotifiedDescription', currentWeather);
+        await prefs.setString('lastNotifiedWeather', currentWeather);
       }
     }
   }
 
-  static Future<void> checkNewPreference(String newPreference) async {
-    print('hello');
-    Position position = await Geolocator.getCurrentPosition();
-    String currentWeather =
-        await getCurrentWeather(position.latitude, position.longitude);
-    print('c ${currentWeather}');
-    print('n${newPreference}');
+  static Future<void> addNewAlert(String newAlert) async {
+    final prefs = await SharedPreferences.getInstance();
+    List<String> savedAlerts = prefs.getStringList('savedAlerts') ?? [];
 
-    if (currentWeather == newPreference) {
-      await showNotification(
-        id: DateTime.now().millisecond,
-        title: 'Weather Alert',
-        body:
-            'New preference "$newPreference" matches the current weather condition!',
-      );
+    if (!savedAlerts.contains(newAlert)) {
+      savedAlerts.add(newAlert);
+      await prefs.setStringList('savedAlerts', savedAlerts);
+
+      // Check if the new alert matches current weather
+      String currentWeather = await getCurrentWeatherDescription();
+      if (currentWeather == newAlert) {
+        await showNotification(
+          id: DateTime.now().millisecond,
+          title: 'New Weather Alert Match',
+          body:
+              'Your new alert "$newAlert" matches the current weather. Stay informed!',
+        );
+      }
     }
+  }
+
+  static Future<String> getCurrentWeatherDescription() async {
+    Position position = await Geolocator.getCurrentPosition();
+    return await getCurrentWeather(position.latitude, position.longitude);
   }
 
   static Future<String> getCurrentWeather(double lat, double lon) async {
@@ -117,26 +123,17 @@ class NotificationService {
     }
   }
 
+  static Future<void> checkCurrentLocationWeather() async {
+    String currentWeather = await getCurrentWeatherDescription();
+    await checkAndNotify(currentWeather);
+  }
+
   @pragma('vm:entry-point')
   static void callbackDispatcher() {
     Workmanager().executeTask((task, inputData) async {
       switch (task) {
         case "checkWeather":
-          SharedPreferences prefs = await SharedPreferences.getInstance();
-          bool notificationsEnabled =
-              prefs.getBool('notificationsEnabled') ?? true;
-
-          if (notificationsEnabled) {
-            try {
-              Position position = await Geolocator.getCurrentPosition();
-              String currentWeather =
-                  await NotificationService.getCurrentWeather(
-                      position.latitude, position.longitude);
-              await NotificationService.checkAndNotify(currentWeather);
-            } catch (e) {
-              print('Error in background task: $e');
-            }
-          }
+          await checkCurrentLocationWeather();
           break;
       }
       return Future.value(true);

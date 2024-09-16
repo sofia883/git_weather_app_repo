@@ -18,15 +18,16 @@ import 'package:google_fonts/google_fonts.dart';
 import 'notification_service.dart';
 import 'package:app_settings/app_settings.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
-
-enum LastAttemptedAction { currentLocation, savedPreference, search }
+import 'package:flutter/gestures.dart'; // Import this for TapGestureRecognizer
+import 'package:dio/dio.dart';
 
 class WeatherScreen extends StatefulWidget {
   final String? location;
-  final LastAttemptedAction? lastAttemptedAction;
 
-  const WeatherScreen({Key? key, this.location, this.lastAttemptedAction})
-      : super(key: key);
+  const WeatherScreen({
+    Key? key,
+    this.location,
+  }) : super(key: key);
 
   // const WeatherScreen({Key? key}) : super(key: key);
 
@@ -35,7 +36,9 @@ class WeatherScreen extends StatefulWidget {
 }
 
 class WeatherScreenState extends State<WeatherScreen> {
-  LastAttemptedAction? _lastAttemptedAction;
+  List<String> searchHistory = [];
+  Timer? _debounce;
+  final dio = Dio();
   Future<Map<String, dynamic>>? weather;
   String cityName = 'Current Location';
   List<String> searchResults = [];
@@ -48,19 +51,21 @@ class WeatherScreenState extends State<WeatherScreen> {
   String errorMessage = '';
   List<String> _savedPreferences = []; // Add this line
   bool isCurrentLocation = false;
+  Future<String>? _currentLocationDescription;
   String _currentDescription = '';
+
   bool _hasNetworkError = false;
   bool _isLocationPermissionDenied = false;
-  bool _isLocationServiceEnabled = false;
 
-  bool _isCurrentLocationFetched = false;
   double? lastKnownLatitude;
   double? lastKnownLongitude;
   StreamSubscription<ServiceStatus>? _locationServiceStatusSubscription;
-  LastAttemptedAction? lastAttemptLocation;
+  bool _lastRequestWasCurrentLocation = false;
 
   @override
   void dispose() {
+    _debounce?.cancel();
+
     _searchController.dispose();
     _locationServiceStatusSubscription?.cancel();
     super.dispose();
@@ -69,30 +74,13 @@ class WeatherScreenState extends State<WeatherScreen> {
   @override
   void initState() {
     super.initState();
+    _loadSearchHistory();
     _loadSavedPreferences().then((_) {
-      _initializeAppp();
+      _initializeApp();
     });
   }
 
-  void _handleError(dynamic error, LastAttemptedAction action) {
-    setState(() {
-      isLoading = false;
-      _lastAttemptedAction = action;
-      if (error is SocketException || error is TimeoutException) {
-        _hasNetworkError = true;
-        errorMessage =
-            'No internet connection. Please check your network settings.';
-      } else if (error.toString().contains('Location')) {
-        _isLocationPermissionDenied = true;
-        errorMessage = error.toString();
-      } else {
-        errorMessage = 'An unexpected error occurred. Please try again.';
-      }
-    });
-    _showNetworkErrorDialog();
-  }
-
-  Future<void> _initializeAppp() async {
+  Future<void> _initializeApp() async {
     setState(() {
       isLoading = true;
       errorMessage = '';
@@ -103,16 +91,10 @@ class WeatherScreenState extends State<WeatherScreen> {
       await _checkConnectivity();
       await _loadSavedPreferences();
 
-      if (widget.location != null && widget.location!.isNotEmpty) {
-        await _initializeWeatherForLocation(widget.location!);
-      } else if (_savedPreferences.isNotEmpty) {
-        await _initializeWeatherForLocation(_savedPreferences.first);
-      } else {
-        await _handleCurrentLocationRequest();
-      }
-      _lastAttemptedAction = LastAttemptedAction.currentLocation;
+      // Always start with current location
+      await _handleCurrentLocationRequest();
     } catch (e) {
-      _handleError(e, LastAttemptedAction.currentLocation);
+      _handleError(e);
     } finally {
       setState(() {
         isLoading = false;
@@ -120,35 +102,153 @@ class WeatherScreenState extends State<WeatherScreen> {
     }
   }
 
-  // Future<void> _initializeApp() async {
-  //   setState(() {
-  //     isLoading = true;
-  //     errorMessage = '';
-  //     _hasNetworkError = false;
-  //   });
+  Future<void> _handleCurrentLocationRequest() async {
+    _lastRequestWasCurrentLocation = true;
+    setState(() {
+      isLoading = true;
+    });
 
-  //   try {
-  //     await _checkConnectivity();
-  //     await _checkLocationService();
-  //     await _handleLocationPermission();
-  //     await _loadSavedPreferences();
-  //     if (widget.location != null && widget.location!.isNotEmpty) {
-  //       await _initializeWeatherForLocation(widget.location!);
-  //     } else if (_savedPreferences.isNotEmpty) {
-  //       await _initializeWeatherForLocation(_savedPreferences.first);
-  //     } else {
-  //       await _handleCurrentLocationRequest();
-  //     }
-  //     _lastAttemptedAction = LastAttemptedAction.currentLocation;
-  //     // await _getCurrentLocation();
-  //   } catch (e) {
-  //     _handleError(e, LastAttemptedAction.currentLocation);
-  //   } finally {
-  //     setState(() {
-  //       isLoading = false;
-  //     });
-  //   }
-  // }
+    try {
+      Position position = await Geolocator.getCurrentPosition(
+        desiredAccuracy: LocationAccuracy.high,
+      );
+      await _fetchWeatherForCurrentLocation(
+          position.latitude, position.longitude);
+    } catch (e) {
+      _handleError(e);
+    } finally {
+      setState(() {
+        isLoading = false;
+      });
+    }
+  }
+
+// Fetch the current weather based on user's location
+  Future<String> getCurrentWeatherDescription() async {
+    Position position = await Geolocator.getCurrentPosition();
+    return await getCurrentLocationWeather(
+        position.latitude, position.longitude);
+  }
+
+  // Fetch the weather description from the API
+  Future<String> getCurrentLocationWeather(double lat, double lon) async {
+    final apiKey = 'a99e2b4ee1217d2cafe222279d444d4c';
+    final url =
+        'https://api.openweathermap.org/data/2.5/weather?lat=$lat&lon=$lon&appid=$apiKey';
+
+    final response = await http.get(Uri.parse(url));
+    if (response.statusCode == 200) {
+      final data = json.decode(response.body);
+      return data['weather'][0]
+          ['description']; // Return the weather description
+    } else {
+      throw Exception('Failed to load weather data');
+    }
+  }
+
+  Future<void> _fetchWeatherForCurrentLocation(double lat, double lon) async {
+    try {
+      final weatherData = await _fetchWeatherData('lat=$lat&lon=$lon');
+      setState(() {
+        weather = Future.value(weatherData);
+        cityName =
+            '${weatherData['city']['name']}, ${weatherData['city']['country']}';
+        isCurrentLocation = true;
+        _currentLocationDescription = getCurrentWeatherDescription();
+      });
+    } catch (e) {
+      _handleError(e);
+    }
+  }
+
+  Future<Map<String, dynamic>> _fetchWeatherData(String query) async {
+    var connectivityResult = await (Connectivity().checkConnectivity());
+    if (connectivityResult == ConnectivityResult.none) {
+      throw TimeoutException('No internet connection');
+    }
+
+    try {
+      final response = await http
+          .get(
+            Uri.parse(
+              'https://api.openweathermap.org/data/2.5/forecast?$query&APPID=$openWeatherAPIKey',
+            ),
+          )
+          .timeout(Duration(seconds: 10));
+
+      if (response.statusCode != 200) {
+        throw Exception('Failed to load weather data: ${response.statusCode}');
+      }
+      return jsonDecode(response.body);
+    } on TimeoutException catch (_) {
+      throw TimeoutException('Failed to load weather data: Connection timeout');
+    } on SocketException catch (_) {
+      throw SocketException(
+          'Failed to load weather data: No internet connection');
+    }
+  }
+
+  void _handleError(dynamic error) {
+    setState(() {
+      isLoading = false;
+
+      if (error is SocketException || error is TimeoutException) {
+        _hasNetworkError = true;
+        errorMessage =
+            'No internet connection. Please check your network settings.';
+        _showNetworkErrorDialog();
+      } else if (error.toString().contains('Location')) {
+        _isLocationPermissionDenied = true;
+        errorMessage = error.toString();
+      } else {
+        errorMessage = 'An unexpected error occurred. Please try again.';
+      }
+    });
+  }
+
+  Future<void> _checkConnectivity() async {
+    var connectivityResult = await (Connectivity().checkConnectivity());
+    if (connectivityResult == ConnectivityResult.none) {
+      throw SocketException('No internet connection');
+    }
+  }
+
+  void _showNetworkErrorDialog() {
+    if (_hasNetworkError) {
+      showDialog(
+        context: context,
+        builder: (BuildContext context) {
+          return AlertDialog(
+            title: Text('Network Error'),
+            content: Text(
+                'To access current data, please check your internet connection.'),
+            actions: <Widget>[
+              TextButton(
+                child: Text('Open Network Settings'),
+                onPressed: () {
+                  Navigator.of(context).pop();
+                  AppSettings.openAppSettings(type: AppSettingsType.wifi);
+                },
+              ),
+              TextButton(
+                child: Text('Try Again'),
+                onPressed: () {
+                  Navigator.of(context).pop();
+                  _initializeApp();
+                },
+              ),
+              TextButton(
+                child: Text('Cancel'),
+                onPressed: () {
+                  Navigator.of(context).pop();
+                },
+              ),
+            ],
+          );
+        },
+      );
+    }
+  }
 
   Future<void> _initializeWeatherForLocation(String location) async {
     setState(() {
@@ -198,65 +298,6 @@ class WeatherScreenState extends State<WeatherScreen> {
         );
       },
     );
-  }
-
-  void _handleLocationServiceDisabled() {
-    setState(() {
-      _isLocationServiceEnabled = false;
-    });
-    if (isCurrentLocation) {
-      _showLocationServiceDisabledDialog();
-    }
-  }
-
-  void _handleLocationServiceEnabled() {
-    setState(() {
-      _isLocationServiceEnabled = true;
-    });
-    if (isCurrentLocation) {
-      _handleCurrentLocationRequest();
-    }
-  }
-
-  Future<void> _handleCurrentLocationRequest() async {
-    setState(() {
-      isLoading = true;
-    });
-
-    bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
-    if (!serviceEnabled) {
-      setState(() {
-        isLoading = false;
-      });
-      _showLocationServiceDialog();
-      return;
-    }
-
-    LocationPermission permission = await Geolocator.checkPermission();
-    if (permission == LocationPermission.denied) {
-      permission = await Geolocator.requestPermission();
-      if (permission == LocationPermission.denied) {
-        setState(() {
-          isLoading = false;
-        });
-        _showLocationPermissionDialog(true);
-        return;
-      }
-    }
-
-    if (permission == LocationPermission.deniedForever) {
-      setState(() {
-        isLoading = false;
-      });
-      _showLocationPermissionDialog(false);
-      return;
-    }
-
-    // If we have permission, get the current location
-    await _getCurrentLocation();
-    setState(() {
-      isLoading = false;
-    });
   }
 
   void _showLocationServiceDialog() {
@@ -358,13 +399,6 @@ class WeatherScreenState extends State<WeatherScreen> {
     }
   }
 
-  Future<void> _checkConnectivity() async {
-    var connectivityResult = await (Connectivity().checkConnectivity());
-    if (connectivityResult == ConnectivityResult.none) {
-      throw SocketException('No internet connection');
-    }
-  }
-
   Future<void> _handleLocationPermission() async {
     LocationPermission permission = await Geolocator.checkPermission();
     if (permission == LocationPermission.denied) {
@@ -401,13 +435,6 @@ class WeatherScreenState extends State<WeatherScreen> {
     _showNetworkErrorDialog();
   }
 
-  Future<void> _checkLocationService() async {
-    bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
-    setState(() {
-      _isLocationServiceEnabled = serviceEnabled;
-    });
-  }
-
   Future<void> _initializeWeather() async {
     setState(() {
       isLoading = true;
@@ -434,23 +461,6 @@ class WeatherScreenState extends State<WeatherScreen> {
     }
   }
 
-  Future<void> _refreshCurrentLocationWeather() async {
-    try {
-      setState(() {
-        isLoading = true;
-      });
-      // Assuming you have a method to fetch weather for the last known location
-      await _fetchWeatherForCurrentLocation(
-          lastKnownLatitude!, lastKnownLongitude!);
-    } catch (e) {
-      _handleErroor(e);
-    } finally {
-      setState(() {
-        isLoading = false;
-      });
-    }
-  }
-
   Widget _buildNetworkErrorWidget() {
     return Center(
       child: Column(
@@ -468,7 +478,7 @@ class WeatherScreenState extends State<WeatherScreen> {
           SizedBox(height: 20),
           ElevatedButton(
             onPressed: () {
-              _initializeAppp();
+              _initializeApp();
             },
             child: Text('Try Again'),
           ),
@@ -478,13 +488,9 @@ class WeatherScreenState extends State<WeatherScreen> {
   }
 
   Future<void> _loadSavedPreferences() async {
-    // print(lastAttemptLocation);
     final prefs = await SharedPreferences.getInstance();
     setState(() {
       _savedPreferences = prefs.getStringList('savedPreferences') ?? [];
-      // lastAttemptLocation = prefs.getString('lastAttemptLocation') ?? '';
-      lastAttemptLocation = LastAttemptedAction.savedPreference;
-      // Optional: Use lastAttemptLocation as needed
     });
   }
 
@@ -543,101 +549,14 @@ class WeatherScreenState extends State<WeatherScreen> {
     );
   }
 
-  void _handleOtherErrors(dynamic e) {
-    // Handle other types of errors (e.g., location, data parsing, etc.)
-    setState(() {
-      errorMessage = 'Something went wrong. Please try again.';
+  void searchLocation(String query) {
+    if (_debounce?.isActive ?? false) _debounce!.cancel();
+    _debounce = Timer(const Duration(milliseconds: 300), () {
+      _performSearch(query);
     });
   }
 
-  void _showSearchBarOption() {
-    showDialog(
-      context: context,
-      builder: (BuildContext context) {
-        return AlertDialog(
-          title: Text('Location Permission Denied'),
-          content: Text('Would you like to search for the location manually?'),
-          actions: <Widget>[
-            TextButton(
-              child: Text('Yes'),
-              onPressed: () {
-                Navigator.of(context).pop();
-                _showSearchBar();
-              },
-            ),
-            TextButton(
-              child: Text('Allow location'),
-              onPressed: () async {
-                Navigator.of(context).pop();
-                await Geolocator.openAppSettings();
-              },
-            ),
-            TextButton(
-              child: Text('No'),
-              onPressed: () {
-                Navigator.of(context).pop();
-              },
-            ),
-          ],
-        );
-      },
-    );
-  }
-
-  Future<void> _fetchWeatherForCurrentLocation(double lat, double lon) async {
-    try {
-      final weatherData = await _fetchWeatherData('lat=$lat&lon=$lon');
-      setState(() {
-        weather = Future.value(weatherData);
-        cityName =
-            weatherData['city']['name'] + ', ' + weatherData['city']['country'];
-      });
-    } catch (e) {
-      _handleNetworkError(e);
-    }
-  }
-
-  // Future<void> _initializeWeatherForLocation(String location) async {
-  //   try {
-  //     var weatherData = await _fetchWeatherData('q=$location');
-  //     setState(() {
-  //       cityName = location;
-  //       weather = Future.value(weatherData);
-  //     });
-  //   } catch (e) {
-  //     _handleNetworkError(e);
-  //   }
-  // }
-
-  Future<Map<String, dynamic>> _fetchWeatherData(String query) async {
-    var connectivityResult = await (Connectivity().checkConnectivity());
-    if (connectivityResult == ConnectivityResult.none) {
-      throw TimeoutException('No internet connection');
-    }
-
-    try {
-      final response = await http
-          .get(
-            Uri.parse(
-              'https://api.openweathermap.org/data/2.5/forecast?$query&APPID=$openWeatherAPIKey',
-            ),
-          )
-          .timeout(Duration(seconds: 5));
-
-      if (response.statusCode != 200) {
-        throw Exception('Failed to load weather data: ${response.statusCode}');
-      }
-      return jsonDecode(response.body);
-    } on TimeoutException catch (_) {
-      throw TimeoutException('Failed to load weather data: Connection timeout');
-    } on SocketException catch (_) {
-      throw SocketException(
-          'Failed to load weather data: No internet connection');
-    }
-  }
-
-  Future<void> searchLocation(String query) async {
-    _lastAttemptedAction = LastAttemptedAction.search;
+  Future<void> _performSearch(String query) async {
     if (query.isEmpty) {
       setState(() {
         searchResults = [];
@@ -646,18 +565,13 @@ class WeatherScreenState extends State<WeatherScreen> {
     }
 
     try {
-      var connectivityResult = await (Connectivity().checkConnectivity());
-      if (connectivityResult == ConnectivityResult.none) {
-        throw TimeoutException('No internet connection');
-      }
-
       final response = await http
           .get(
             Uri.parse(
               'https://api.openweathermap.org/geo/1.0/direct?q=$query&limit=5&appid=$openWeatherAPIKey',
             ),
           )
-          .timeout(Duration(seconds: 10));
+          .timeout(Duration(seconds: 3));
 
       if (response.statusCode == 200) {
         List<dynamic> cities = json.decode(response.body);
@@ -673,8 +587,149 @@ class WeatherScreenState extends State<WeatherScreen> {
         throw Exception('Failed to load search results');
       }
     } catch (e) {
-      _handleError(e, LastAttemptedAction.search);
+      _showErrorSnackbar(query);
     }
+  }
+
+  Future<void> _loadSearchHistory() async {
+    SharedPreferences prefs = await SharedPreferences.getInstance();
+    setState(() {
+      searchHistory = prefs.getStringList('searchHistory') ?? [];
+    });
+  }
+
+  Future<void> _addToSearchHistory(String location) async {
+    if (!searchHistory.contains(location)) {
+      setState(() {
+        searchHistory.insert(0, location);
+        if (searchHistory.length > 5) {
+          searchHistory.removeLast();
+        }
+      });
+      SharedPreferences prefs = await SharedPreferences.getInstance();
+      await prefs.setStringList('searchHistory', searchHistory);
+    }
+  }
+
+  void _showAllHistoryDialog() {
+    showDialog(
+      context: context,
+      builder: (BuildContext context) {
+        return AlertDialog(
+          title: Text('Search History'),
+          content: Container(
+            width: double.maxFinite,
+            child: ListView.builder(
+              shrinkWrap: true,
+              itemCount: searchHistory.length,
+              itemBuilder: (BuildContext context, int index) {
+                return ListTile(
+                  title: Text(searchHistory[index]),
+                  onTap: () {
+                    Navigator.of(context).pop();
+                    _selectCity(searchHistory[index]);
+                  },
+                );
+              },
+            ),
+          ),
+          actions: <Widget>[
+            TextButton(
+              child: Text('Close'),
+              onPressed: () {
+                Navigator.of(context).pop();
+              },
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  Widget _buildHighlightedText(String text, String query) {
+    final List<TextSpan> spans = [];
+    final lowercaseText = text.toLowerCase();
+    final lowercaseQuery = query.toLowerCase();
+    int start = 0;
+
+    while (true) {
+      final int index = lowercaseText.indexOf(lowercaseQuery, start);
+      if (index == -1) {
+        spans.add(TextSpan(text: text.substring(start)));
+        break;
+      }
+      if (index > start) {
+        spans.add(TextSpan(text: text.substring(start, index)));
+      }
+      spans.add(TextSpan(
+        text: text.substring(index, index + query.length),
+        style: TextStyle(color: Colors.green, fontWeight: FontWeight.bold),
+      ));
+      start = index + query.length;
+    }
+
+    return RichText(
+        text: TextSpan(style: TextStyle(color: Colors.white), children: spans));
+  }
+
+  void _selectCity(String selectedCity) {
+    setState(() {
+      cityName = selectedCity;
+      weather = getCurrentWeather(selectedCity.split(',')[0]);
+      _isSearching = false;
+      _searchController.clear();
+      searchResults = [];
+    });
+    _addToSearchHistory(selectedCity);
+  }
+
+  void _showErrorSnackbar(String query) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Center(
+          child: RichText(
+            textAlign: TextAlign.center,
+            text: TextSpan(
+              style: TextStyle(color: Colors.white),
+              children: [
+                TextSpan(text: 'Could not load result. '),
+                TextSpan(
+                  text: 'Try again',
+                  style: TextStyle(
+                    color: Colors.red,
+                    fontWeight: FontWeight.bold,
+                  ),
+                  recognizer: TapGestureRecognizer()
+                    ..onTap = () {
+                      ScaffoldMessenger.of(context).hideCurrentSnackBar();
+                      searchLocation(query);
+                    },
+                ),
+                TextSpan(text: ' or '),
+                TextSpan(
+                  text: 'check network',
+                  style: TextStyle(
+                    color: Colors.blue,
+                    fontWeight: FontWeight.bold,
+                  ),
+                  recognizer: TapGestureRecognizer()
+                    ..onTap = () {
+                      ScaffoldMessenger.of(context).hideCurrentSnackBar();
+                      AppSettings.openAppSettings(type: AppSettingsType.wifi);
+                    },
+                ),
+              ],
+            ),
+          ),
+        ),
+        backgroundColor: Colors.black87,
+        duration: Duration(seconds: 5),
+        behavior: SnackBarBehavior.floating,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(10.0),
+        ),
+      ),
+    );
   }
 
   void _handleNetworkError(dynamic error) {
@@ -692,48 +747,6 @@ class WeatherScreenState extends State<WeatherScreen> {
       }
     });
     _showNetworkErrorDialog();
-  }
-
-  void _showNetworkErrorDialog() {
-    showDialog(
-      context: context,
-      builder: (BuildContext context) {
-        return AlertDialog(
-          title: Text('Network Error'),
-          content: Text(
-              'To access current data, please check your internet connection.'),
-          actions: <Widget>[
-            TextButton(
-              child: Text('Open Network Settings'),
-              onPressed: () {
-                Navigator.of(context).pop();
-                AppSettings.openAppSettings(type: AppSettingsType.wifi);
-              },
-            ),
-            TextButton(
-              child: Text('Try Again'),
-              onPressed: () {
-                Navigator.of(context).pop();
-                _initializeAppp();
-              },
-            ),
-            TextButton(
-              child: Text('Cancel'),
-              onPressed: () {
-                Navigator.of(context).pop();
-              },
-            ),
-          ],
-        );
-      },
-    );
-  }
-
-  Future<void> _loadIsCurrentLocation() async {
-    final prefs = await SharedPreferences.getInstance();
-    setState(() {
-      isCurrentLocation = prefs.getBool('isCurrentLocation') ?? false;
-    });
   }
 
   Future<void> _saveIsCurrentLocation(bool value) async {
@@ -792,42 +805,6 @@ class WeatherScreenState extends State<WeatherScreen> {
       print("Error fetching weather for current location: $e");
       return 'Failed to fetch weather condition';
     }
-  }
-
-  Future<void> _checkLocationPermission() async {
-    bool serviceEnabled;
-    LocationPermission permission;
-
-    // Check if location services are enabled
-    serviceEnabled = await Geolocator.isLocationServiceEnabled();
-    if (!serviceEnabled) {
-      _showLocationServiceDialog();
-      return;
-    }
-
-    // Check location permission
-    permission = await Geolocator.checkPermission();
-    if (permission == LocationPermission.denied) {
-      permission = await Geolocator.requestPermission();
-      if (permission == LocationPermission.denied) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Location permission denied')),
-        );
-        return _loadSavedPreferences().then((_) {
-          _initializeWeather();
-        });
-      }
-    }
-
-    if (permission == LocationPermission.deniedForever) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Location permissions are permanently denied')),
-      );
-      return _loadSavedPreferences().then((_) {
-        _initializeWeather();
-      });
-    }
-    // NotificationService.checkAndNotify(_currentDes);
   }
 
   void _handleTemperatureUnitChanged(bool isCelsius) async {
@@ -933,15 +910,8 @@ class WeatherScreenState extends State<WeatherScreen> {
         });
         break;
       case 'current_location':
-        // _initializeWeather();
-        // _loadSavedPreferences().then((_) {
-        //   _initializeWeather();
-        // });
-
-        // _handleLocationPermission();
+        _lastRequestWasCurrentLocation = true;
         _handleCurrentLocationRequest();
-
-        // _initializeWeather();
 
         break;
       case 'profile':
@@ -978,7 +948,6 @@ class WeatherScreenState extends State<WeatherScreen> {
 
   void _checkDescriptionChange(Map<String, dynamic> weatherData) {
     final newDescription = weatherData['list'][0]['weather'][0]['description'];
-    // final newDescription = 'Tornado';
 
     if (newDescription != _currentDescription && isCurrentLocation) {
       NotificationService.checkAndNotify(
@@ -1045,12 +1014,28 @@ class WeatherScreenState extends State<WeatherScreen> {
           ],
         ),
         SizedBox(height: 14),
-        Text(
-          _currentDescription,
-          style: GoogleFonts.abel(
-            textStyle: TextStyle(
-                fontSize: 45, color: AppColors.getTextColor(_isDarkMode)),
-          ),
+        // Use FutureBuilder to handle the async weather description fetching
+        FutureBuilder<String>(
+          future: isCurrentLocation
+              ? getCurrentWeatherDescription()
+              : Future.value(_currentDescription),
+          builder: (context, snapshot) {
+            if (snapshot.connectionState == ConnectionState.waiting) {
+              return CircularProgressIndicator(); // Show loading indicator while fetching
+            } else if (snapshot.hasError) {
+              return Text('Error: ${snapshot.error}');
+            } else {
+              // Once data is fetched, display the description
+              final weatherDescription = snapshot.data ?? 'Unknown weather';
+              return Text(
+                weatherDescription,
+                style: GoogleFonts.abel(
+                  textStyle: TextStyle(
+                      fontSize: 45, color: AppColors.getTextColor(_isDarkMode)),
+                ),
+              );
+            }
+          },
         ),
         Text(
           'Wind:',
@@ -1298,8 +1283,8 @@ class WeatherScreenState extends State<WeatherScreen> {
                                                 ),
                                               ],
                                               color: _isDarkMode
-                                                  ? Colors.black
-                                                  : Colors.white,
+                                                  ? Colors.white
+                                                  : Colors.black,
                                               border: Border.all(
                                                 color: _isDarkMode
                                                     ? Colors.black
@@ -1356,22 +1341,63 @@ class WeatherScreenState extends State<WeatherScreen> {
                                         ),
                                       ],
                                     ),
+
                               if (_isSearching && searchResults.isNotEmpty)
                                 Expanded(
                                   child: ListView.builder(
                                     itemCount: searchResults.length,
                                     itemBuilder: (context, index) {
                                       return ListTile(
-                                        title: Text(searchResults[index]),
+                                        title: _buildHighlightedText(
+                                            searchResults[index],
+                                            _searchController.text),
                                         onTap: () {
-                                          selectCity(searchResults[index]);
+                                          _selectCity(searchResults[index]);
                                         },
                                       );
                                     },
                                   ),
-                                ),
-                              if (!_isSearching)
-                                // Your existing weather display widget
+                                )
+                              else if (_isSearching && searchHistory.isNotEmpty)
+                                Expanded(
+                                  child: Column(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                      Padding(
+                                        padding: const EdgeInsets.all(8.0),
+                                        child: Row(
+                                          mainAxisAlignment:
+                                              MainAxisAlignment.spaceBetween,
+                                          children: [
+                                            GestureDetector(
+                                              onTap: _showAllHistoryDialog,
+                                              child: Text('View All',
+                                                  style: TextStyle(
+                                                      color: Colors.blue)),
+                                            ),
+                                          ],
+                                        ),
+                                      ),
+                                      Expanded(
+                                        child: ListView.builder(
+                                          itemCount:
+                                              searchHistory.length.clamp(0, 5),
+                                          itemBuilder: (context, index) {
+                                            return ListTile(
+                                              title: Text(searchHistory[index]),
+                                              onTap: () {
+                                                _selectCity(
+                                                    searchHistory[index]);
+                                              },
+                                            );
+                                          },
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                )
+                              else
                                 Expanded(
                                     child: FutureBuilder<Map<String, dynamic>>(
                                   future: weather,
@@ -1419,17 +1445,7 @@ class WeatherScreenState extends State<WeatherScreen> {
                                           children: [
                                             ElevatedButton(
                                               onPressed: () async {
-                                                NotificationService
-                                                    .checkAndNotify(
-                                                  weatherDescription,
-                                                );
-                                                await NotificationService
-                                                    .showNotification(
-                                                  id: 0, // Use a simple static ID for testing
-                                                  title: 'Test Notification',
-                                                  body:
-                                                      'This is a test notification.',
-                                                );
+                                                // First, add some weather alerts
                                               },
                                               child: Text(
                                                   'Send Test Notification'),

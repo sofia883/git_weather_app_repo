@@ -1,9 +1,8 @@
 import 'package:flutter/material.dart';
 // import 'package:weather_icons/weather_icons.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:weather_app/weather_screen.dart';
 // import 'methods.dart';
-// import 'weather_screen.dart';
+import 'weather_screen.dart';
 import 'notification_service.dart';
 import 'package:geolocator/geolocator.dart';
 
@@ -83,7 +82,6 @@ class _PreferencesPageState extends State<PreferencesPage> {
   bool _showAllSavedLocations = false;
   List<String> _savedLocations = [];
   bool isCurrentLocation = false;
-  LastAttemptedAction? _lastAttemptedAction;
   @override
   void initState() {
     super.initState();
@@ -154,18 +152,56 @@ class _PreferencesPageState extends State<PreferencesPage> {
     );
   }
 
+  void _addPreference(String condition) async {
+    _handleLocationPermission();
+    if (!_savedPreferences.contains(condition)) {
+      setState(() {
+        newPreference = condition;
+        _savedPreferences.add(condition);
+        _savePreferences();
+      });
+
+      final prefs = await SharedPreferences.getInstance();
+      bool notificationsEnabled = prefs.getBool('notificationsEnabled') ?? true;
+
+      if (notificationsEnabled) {
+        _showSaveConfirmationSnackbar();
+        NotificationService.addNewAlert(condition);
+        
+      } else {
+        _showNotificationsDisabledSnackbar();
+      }
+    } else {
+      _showDuplicatePreferenceSnackbar();
+    }
+  }
+
+  void _showNotificationsDisabledSnackbar() {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text('Enable notifications to receive weather alerts'),
+        duration: Duration(seconds: 5),
+        action: SnackBarAction(
+          label: 'Open Settings',
+          onPressed: () {
+            // Open app settings
+            Geolocator.openAppSettings();
+          },
+        ),
+      ),
+    );
+  }
+
   Future<void> _handleLocationPermission() async {
     bool serviceEnabled;
     LocationPermission permission;
 
-    // Check if location services are enabled
     serviceEnabled = await Geolocator.isLocationServiceEnabled();
     if (!serviceEnabled) {
       _showLocationServiceDialog();
       return;
     }
 
-    // Check location permission
     permission = await Geolocator.checkPermission();
     if (permission == LocationPermission.denied) {
       permission = await Geolocator.requestPermission();
@@ -180,25 +216,8 @@ class _PreferencesPageState extends State<PreferencesPage> {
       return;
     }
 
-    // If permission is granted, fetch current location weather
-    NotificationService.checkNewPreference(newPreference);
-  }
-
-  void _addPreference(String condition) {
-    _handleLocationPermission();
-    if (!_savedPreferences.contains(condition)) {
-      setState(() {
-        newPreference = condition;
-        _savedPreferences.add(condition);
-        _savePreferences();
-      });
-      _showSaveConfirmationSnackbar();
-      NotificationService.checkNewPreference(
-        condition,
-      );
-    } else {
-      _showDuplicatePreferenceSnackbar();
-    }
+    // If permission is granted, check current weather
+    NotificationService.checkCurrentLocationWeather();
   }
 
   Future<void> _loadSavedLocations() async {
@@ -317,28 +336,7 @@ class _PreferencesPageState extends State<PreferencesPage> {
           ),
         ],
       ),
-      onTap: () async {
-        // Set the last attempted location as the saved preference
-        String lastAttemptLocation = location;
-
-        // Save this location in SharedPreferences
-        final prefs = await SharedPreferences.getInstance();
-        List<String> updatedPreferences =
-            prefs.getStringList('savedPreferences') ?? [];
-        if (!updatedPreferences.contains(lastAttemptLocation)) {
-          updatedPreferences.add(lastAttemptLocation);
-        }
-
-        await prefs.setStringList('savedPreferences', updatedPreferences);
-        await prefs.setString('lastAttemptLocation', lastAttemptLocation);
-
-        // Optionally, update the state or show a confirmation Snackbar
-        setState(() {
-          _savedPreferences = updatedPreferences;
-        });
-        _showSaveConfirmationSnackbar();
-
-        // Continue with the navigation or other actions
+      onTap: () {
         widget.onLocationSelected(location);
         Navigator.push(
           context,
@@ -347,6 +345,31 @@ class _PreferencesPageState extends State<PreferencesPage> {
           ),
         );
       },
+    );
+  }
+
+  Widget _buildPreferenceTile(String condition) {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 8.0),
+      decoration: BoxDecoration(
+        color: Colors.black,
+        borderRadius: BorderRadius.circular(8.0),
+      ),
+      child: ListTile(
+        title: Text(condition, style: TextStyle(color: Colors.white)),
+        trailing: IconButton(
+          icon: Icon(Icons.delete, color: Colors.white),
+          onPressed: () => _confirmRemovePreference(condition),
+        ),
+        onTap: () {
+          Navigator.push(
+            context,
+            MaterialPageRoute(
+              builder: (context) => WeatherScreen(location: condition),
+            ),
+          );
+        },
+      ),
     );
   }
 
@@ -379,22 +402,22 @@ class _PreferencesPageState extends State<PreferencesPage> {
     );
   }
 
-  Widget _buildPreferenceTile(String condition) {
-    return Container(
-      margin: const EdgeInsets.only(bottom: 8.0),
-      decoration: BoxDecoration(
-        color: Colors.black,
-        borderRadius: BorderRadius.circular(8.0),
-      ),
-      child: ListTile(
-        title: Text(condition, style: TextStyle(color: Colors.white)),
-        trailing: IconButton(
-          icon: Icon(Icons.delete, color: Colors.white),
-          onPressed: () => _confirmRemovePreference(condition),
-        ),
-      ),
-    );
-  }
+  // Widget _buildPreferenceTile(String condition) {
+  //   return Container(
+  //     margin: const EdgeInsets.only(bottom: 8.0),
+  //     decoration: BoxDecoration(
+  //       color: Colors.black,
+  //       borderRadius: BorderRadius.circular(8.0),
+  //     ),
+  //     child: ListTile(
+  //       title: Text(condition, style: TextStyle(color: Colors.white)),
+  //       trailing: IconButton(
+  //         icon: Icon(Icons.delete, color: Colors.white),
+  //         onPressed: () => _confirmRemovePreference(condition),
+  //       ),
+  //     ),
+  //   );
+  // }
 
   Widget _buildWeatherAlertDropdown() {
     return Container(
