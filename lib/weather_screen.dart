@@ -81,6 +81,110 @@ class WeatherScreenState extends State<WeatherScreen> {
     });
   }
 
+  String _lastSelectedLocation = '';
+
+  void _selectCity(String selectedCity) {
+    setState(() {
+      cityName = selectedCity;
+      _lastSelectedLocation = selectedCity;
+      _isSearching = false;
+      _searchController.clear();
+      searchResults = [];
+      isCurrentLocation = false;
+    });
+    _initializeWeatherForLocation(selectedCity);
+    _addToSearchHistory(selectedCity);
+  }
+
+  Future<void> _initializeWeatherForLocation(String location) async {
+    setState(() {
+      isLoading = true;
+      errorMessage = '';
+      _hasNetworkError = false;
+    });
+
+    try {
+      final weatherData = await _fetchWeatherData('q=$location').timeout(
+        Duration(seconds: 10),
+        onTimeout: () {
+          throw TimeoutException(
+              'Failed to load weather data: Connection timeout');
+        },
+      );
+      setState(() {
+        weather = Future.value(weatherData);
+        cityName = location;
+        isCurrentLocation = false;
+      });
+    } catch (e) {
+      _handleError(e);
+    } finally {
+      setState(() {
+        isLoading = false;
+      });
+    }
+  }
+
+  void _handleError(dynamic error) {
+    setState(() {
+      isLoading = false;
+
+      if (error is SocketException || error is TimeoutException) {
+        _hasNetworkError = true;
+        errorMessage =
+            'No internet connection. Please check your network settings.';
+        _showNetworkErrorDialog();
+      } else if (error.toString().contains('Location')) {
+        _isLocationPermissionDenied = true;
+        errorMessage = error.toString();
+      } else {
+        errorMessage = 'An unexpected error occurred. Please try again.';
+      }
+    });
+  }
+
+  void _showNetworkErrorDialog() {
+    if (_hasNetworkError) {
+      showDialog(
+        context: context,
+        barrierDismissible: false,
+        builder: (BuildContext context) {
+          return AlertDialog(
+            title: Text('Network Error'),
+            content: Text(
+                'To access current data, please check your internet connection.'),
+            actions: <Widget>[
+              TextButton(
+                child: Text('Open Network Settings'),
+                onPressed: () {
+                  Navigator.of(context).pop();
+                  AppSettings.openAppSettings(type: AppSettingsType.wifi);
+                },
+              ),
+              TextButton(
+                child: Text('Try Again'),
+                onPressed: () {
+                  Navigator.of(context).pop();
+                  if (_lastSelectedLocation.isNotEmpty) {
+                    _initializeWeatherForLocation(_lastSelectedLocation);
+                  } else {
+                    _initializeApp();
+                  }
+                },
+              ),
+              TextButton(
+                child: Text('Cancel'),
+                onPressed: () {
+                  Navigator.of(context).pop();
+                },
+              ),
+            ],
+          );
+        },
+      );
+    }
+  }
+
   Future<void> _initializeApp() async {
     setState(() {
       isLoading = true;
@@ -100,7 +204,7 @@ class WeatherScreenState extends State<WeatherScreen> {
       }
     } catch (e) {
       print("Error during initialization: $e");
-      // Don't set _hasNetworkError here, just log the error
+      _handleError(e);
     } finally {
       setState(() {
         isLoading = false;
@@ -108,8 +212,137 @@ class WeatherScreenState extends State<WeatherScreen> {
     }
   }
 
+  // Future<void> _initializeWeatherForLocation(String location) async {
+  //   try {
+  //     final weatherData = await _fetchWeatherData('q=$location').timeout(
+  //       Duration(seconds: 10),
+  //       onTimeout: () {
+  //         throw TimeoutException(
+  //             'Failed to load weather data: Connection timeout');
+  //       },
+  //     );
+  //     setState(() {
+  //       weather = Future.value(weatherData);
+  //       cityName = location;
+  //       isCurrentLocation = false;
+  //     });
+  //   } catch (e) {
+  //     _handleError(e);
+  //   }
+  // }
+
+  Future<Map<String, dynamic>> _fetchWeatherData(String query) async {
+    var connectivityResult = await (Connectivity().checkConnectivity());
+    if (connectivityResult == ConnectivityResult.none) {
+      throw TimeoutException('No internet connection');
+    }
+
+    try {
+      final response = await http
+          .get(
+            Uri.parse(
+              'https://api.openweathermap.org/data/2.5/forecast?$query&APPID=$openWeatherAPIKey',
+            ),
+          )
+          .timeout(Duration(seconds: 10));
+
+      if (response.statusCode != 200) {
+        throw Exception('Failed to load weather data: ${response.statusCode}');
+      }
+      return jsonDecode(response.body);
+    } on TimeoutException catch (_) {
+      throw TimeoutException('Failed to load weather data: Connection timeout');
+    } on SocketException catch (_) {
+      throw SocketException(
+          'Failed to load weather data: No internet connection');
+    }
+  }
+
+  // void _handleError(dynamic error) {
+  //   setState(() {
+  //     isLoading = false;
+
+  //     if (error is SocketException || error is TimeoutException) {
+  //       _hasNetworkError = true;
+  //       errorMessage =
+  //           'No internet connection. Please check your network settings.';
+  //       _showNetworkErrorDialog();
+  //     } else if (error.toString().contains('Location')) {
+  //       _isLocationPermissionDenied = true;
+  //       errorMessage = error.toString();
+  //     } else {
+  //       errorMessage = 'An unexpected error occurred. Please try again.';
+  //     }
+  //   });
+  // }
+
+  // void _showNetworkErrorDialog() {
+  //   if (_hasNetworkError) {
+  //     showDialog(
+  //       context: context,
+  //       builder: (BuildContext context) {
+  //         return AlertDialog(
+  //           title: Text('Network Error'),
+  //           content: Text(
+  //               'To access current data, please check your internet connection.'),
+  //           actions: <Widget>[
+  //             TextButton(
+  //               child: Text('Open Network Settings'),
+  //               onPressed: () {
+  //                 Navigator.of(context).pop();
+  //                 AppSettings.openAppSettings(type: AppSettingsType.wifi);
+  //               },
+  //             ),
+  //             TextButton(
+  //               child: Text('Try Again'),
+  //               onPressed: () {
+  //                 Navigator.of(context).pop();
+  //                 _initializeApp();
+  //               },
+  //             ),
+  //             TextButton(
+  //               child: Text('Cancel'),
+  //               onPressed: () {
+  //                 Navigator.of(context).pop();
+  //               },
+  //             ),
+  //           ],
+  //         );
+  //       },
+  //     );
+  //   }
+  // }
+
+  // Future<void> _initializeApp() async {
+  //   setState(() {
+  //     isLoading = true;
+  //     errorMessage = '';
+  //     _hasNetworkError = false;
+  //   });
+
+  //   try {
+  //     await _checkConnectivity();
+
+  //     if (_lastRequestWasCurrentLocation || widget.location == null) {
+  //       await _handleCurrentLocationRequest();
+  //     } else if (widget.location != null && widget.location!.isNotEmpty) {
+  //       await _initializeWeatherForLocation(widget.location!);
+  //     } else if (_savedPreferences.isNotEmpty) {
+  //       await _initializeWeatherForLocation(_savedPreferences.first);
+  //     }
+  //   } catch (e) {
+  //     print("Error during initialization: $e");
+  //     // Don't set _hasNetworkError here, just log the error
+  //   } finally {
+  //     setState(() {
+  //       isLoading = false;
+  //     });
+  //   }
+  // }
+
   Future<void> _handleCurrentLocationRequest() async {
     setState(() {
+      _lastRequestWasCurrentLocation = true;
       isLoading = true;
     });
     bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
@@ -132,7 +365,6 @@ class WeatherScreenState extends State<WeatherScreen> {
         return;
       }
     }
-
     if (permission == LocationPermission.deniedForever) {
       setState(() {
         isLoading = false;
@@ -202,50 +434,50 @@ class WeatherScreenState extends State<WeatherScreen> {
     }
   }
 
-  Future<Map<String, dynamic>> _fetchWeatherData(String query) async {
-    var connectivityResult = await (Connectivity().checkConnectivity());
-    if (connectivityResult == ConnectivityResult.none) {
-      throw TimeoutException('No internet connection');
-    }
+  // Future<Map<String, dynamic>> _fetchWeatherData(String query) async {
+  //   var connectivityResult = await (Connectivity().checkConnectivity());
+  //   if (connectivityResult == ConnectivityResult.none) {
+  //     throw TimeoutException('No internet connection');
+  //   }
 
-    try {
-      final response = await http
-          .get(
-            Uri.parse(
-              'https://api.openweathermap.org/data/2.5/forecast?$query&APPID=$openWeatherAPIKey',
-            ),
-          )
-          .timeout(Duration(seconds: 10));
+  //   try {
+  //     final response = await http
+  //         .get(
+  //           Uri.parse(
+  //             'https://api.openweathermap.org/data/2.5/forecast?$query&APPID=$openWeatherAPIKey',
+  //           ),
+  //         )
+  //         .timeout(Duration(seconds: 10));
 
-      if (response.statusCode != 200) {
-        throw Exception('Failed to load weather data: ${response.statusCode}');
-      }
-      return jsonDecode(response.body);
-    } on TimeoutException catch (_) {
-      throw TimeoutException('Failed to load weather data: Connection timeout');
-    } on SocketException catch (_) {
-      throw SocketException(
-          'Failed to load weather data: No internet connection');
-    }
-  }
+  //     if (response.statusCode != 200) {
+  //       throw Exception('Failed to load weather data: ${response.statusCode}');
+  //     }
+  //     return jsonDecode(response.body);
+  //   } on TimeoutException catch (_) {
+  //     throw TimeoutException('Failed to load weather data: Connection timeout');
+  //   } on SocketException catch (_) {
+  //     throw SocketException(
+  //         'Failed to load weather data: No internet connection');
+  //   }
+  // }
 
-  void _handleError(dynamic error) {
-    setState(() {
-      isLoading = false;
+  // void _handleError(dynamic error) {
+  //   setState(() {
+  //     isLoading = false;
 
-      if (error is SocketException || error is TimeoutException) {
-        _hasNetworkError = true;
-        errorMessage =
-            'No internet connection. Please check your network settings.';
-        _showNetworkErrorDialog();
-      } else if (error.toString().contains('Location')) {
-        _isLocationPermissionDenied = true;
-        errorMessage = error.toString();
-      } else {
-        errorMessage = 'An unexpected error occurred. Please try again.';
-      }
-    });
-  }
+  //     if (error is SocketException || error is TimeoutException) {
+  //       _hasNetworkError = true;
+  //       errorMessage =
+  //           'No internet connection. Please check your network settings.';
+  //       _showNetworkErrorDialog();
+  //     } else if (error.toString().contains('Location')) {
+  //       _isLocationPermissionDenied = true;
+  //       errorMessage = error.toString();
+  //     } else {
+  //       errorMessage = 'An unexpected error occurred. Please try again.';
+  //     }
+  //   });
+  // }
 
 // Fetch the current weather based on user's location
   Future<String> getCurrentWeatherDescription() async {
@@ -270,57 +502,57 @@ class WeatherScreenState extends State<WeatherScreen> {
     }
   }
 
-  void _showNetworkErrorDialog() {
-    if (_hasNetworkError) {
-      showDialog(
-        context: context,
-        builder: (BuildContext context) {
-          return AlertDialog(
-            title: Text('Network Error'),
-            content: Text(
-                'To access current data, please check your internet connection.'),
-            actions: <Widget>[
-              TextButton(
-                child: Text('Open Network Settings'),
-                onPressed: () {
-                  Navigator.of(context).pop();
-                  AppSettings.openAppSettings(type: AppSettingsType.wifi);
-                },
-              ),
-              TextButton(
-                child: Text('Try Again'),
-                onPressed: () {
-                  Navigator.of(context).pop();
-                  _initializeApp();
-                },
-              ),
-              TextButton(
-                child: Text('Cancel'),
-                onPressed: () {
-                  Navigator.of(context).pop();
-                },
-              ),
-            ],
-          );
-        },
-      );
-    }
-  }
+  // void _showNetworkErrorDialog() {
+  //   if (_hasNetworkError) {
+  //     showDialog(
+  //       context: context,
+  //       builder: (BuildContext context) {
+  //         return AlertDialog(
+  //           title: Text('Network Error'),
+  //           content: Text(
+  //               'To access current data, please check your internet connection.'),
+  //           actions: <Widget>[
+  //             TextButton(
+  //               child: Text('Open Network Settings'),
+  //               onPressed: () {
+  //                 Navigator.of(context).pop();
+  //                 AppSettings.openAppSettings(type: AppSettingsType.wifi);
+  //               },
+  //             ),
+  //             TextButton(
+  //               child: Text('Try Again'),
+  //               onPressed: () {
+  //                 Navigator.of(context).pop();
+  //                 _initializeApp();
+  //               },
+  //             ),
+  //             TextButton(
+  //               child: Text('Cancel'),
+  //               onPressed: () {
+  //                 Navigator.of(context).pop();
+  //               },
+  //             ),
+  //           ],
+  //         );
+  //       },
+  //     );
+  //   }
+  // }
 
-  Future<void> _initializeWeatherForLocation(String location) async {
-    setState(() {
-      cityName = location;
-      isCurrentLocation = false;
-    });
-    try {
-      final weatherData = await _fetchWeatherData('q=$location');
-      setState(() {
-        weather = Future.value(weatherData);
-      });
-    } catch (e) {
-      _handleErroor(e);
-    }
-  }
+  // Future<void> _initializeWeatherForLocation(String location) async {
+  //   setState(() {
+  //     cityName = location;
+  //     isCurrentLocation = false;
+  //   });
+  //   try {
+  //     final weatherData = await _fetchWeatherData('q=$location');
+  //     setState(() {
+  //       weather = Future.value(weatherData);
+  //     });
+  //   } catch (e) {
+  //     _handleErroor(e);
+  //   }
+  // }
 
   void _showLocationServiceDisabledDialog() {
     showDialog(
@@ -712,17 +944,17 @@ class WeatherScreenState extends State<WeatherScreen> {
         text: TextSpan(style: TextStyle(color: Colors.white), children: spans));
   }
 
-  void _selectCity(String selectedCity) {
-    setState(() {
-      cityName = selectedCity;
-      weather = getCurrentWeather(selectedCity.split(',')[0]);
-      _isSearching = false;
-      _searchController.clear();
-      searchResults = [];
-      isCurrentLocation = false;
-    });
-    _addToSearchHistory(selectedCity);
-  }
+  // void _selectCity(String selectedCity) {
+  //   setState(() {
+  //     cityName = selectedCity;
+  //     weather = getCurrentWeather(selectedCity.split(',')[0]);
+  //     _isSearching = false;
+  //     _searchController.clear();
+  //     searchResults = [];
+  //     isCurrentLocation = false;
+  //   });
+  //   _addToSearchHistory(selectedCity);
+  // }
 
   void _showErrorSnackbar(String query) {
     ScaffoldMessenger.of(context).showSnackBar(
@@ -1056,10 +1288,12 @@ class WeatherScreenState extends State<WeatherScreen> {
         ),
         SizedBox(height: 14),
         // Use FutureBuilder to handle the async weather description fetching
-
         Text(
           _currentDescription,
-          style: TextStyle(fontSize: 46),
+          style: GoogleFonts.abel(
+            textStyle: TextStyle(
+                fontSize: 45, color: AppColors.getTextColor(_isDarkMode)),
+          ),
         ),
         Text(
           'Wind:',
@@ -1365,171 +1599,138 @@ class WeatherScreenState extends State<WeatherScreen> {
                                         ),
                                       ],
                                     ),
-
-                              if (_isSearching && searchResults.isNotEmpty)
-                                Expanded(
-                                  child: ListView.builder(
-                                    itemCount: searchResults.length,
-                                    itemBuilder: (context, index) {
-                                      return ListTile(
-                                        title: _buildHighlightedText(
-                                            searchResults[index],
-                                            _searchController.text),
-                                        onTap: () {
-                                          _selectCity(searchResults[index]);
-                                        },
-                                      );
-                                    },
-                                  ),
-                                )
-                              else if (_isSearching && searchHistory.isNotEmpty)
-                                Expanded(
-                                  child: Column(
-                                    crossAxisAlignment:
-                                        CrossAxisAlignment.start,
-                                    children: [
-                                      Padding(
-                                        padding: const EdgeInsets.all(8.0),
-                                        child: Row(
-                                          mainAxisAlignment:
-                                              MainAxisAlignment.spaceBetween,
-                                          children: [
-                                            GestureDetector(
-                                              onTap: _showAllHistoryDialog,
-                                              child: Text('View All',
-                                                  style: TextStyle(
-                                                      color: Colors.blue)),
-                                            ),
-                                          ],
-                                        ),
-                                      ),
-                                      Expanded(
-                                        child: ListView.builder(
-                                          itemCount:
-                                              searchHistory.length.clamp(0, 5),
-                                          itemBuilder: (context, index) {
-                                            return ListTile(
-                                              title: Text(searchHistory[index]),
-                                              onTap: () {
-                                                _selectCity(
-                                                    searchHistory[index]);
-                                              },
-                                            );
-                                          },
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                )
-                              else
-                                Expanded(
-                                    child: FutureBuilder<Map<String, dynamic>>(
-                                  future: weather,
-                                  builder: (context, snapshot) {
-                                    if (snapshot.connectionState ==
-                                        ConnectionState.waiting) {
-                                      return Center(
-                                          child: CircularProgressIndicator());
-                                    }
-                                    if (snapshot.hasError) {
-                                      return Center(
-                                          child:
-                                              Text('Error: ${snapshot.error}'));
-                                    }
-                                    if (!snapshot.hasData) {
-                                      return Center(
-                                          child: Text('No data available'));
-                                    }
-
-                                    final data = snapshot.data!;
-                                    final list = data['list'] as List;
-                                    final currentWeatherData =
-                                        list.isNotEmpty ? list[0] : null;
-
-                                    if (currentWeatherData == null) {
-                                      return Center(
-                                          child: Text(
-                                              'No weather data available'));
-                                    }
-
-                                    final forecastList =
-                                        data['list'] as List<dynamic>? ?? [];
-                                    return Padding(
-                                      padding: const EdgeInsets.all(8.0),
-                                      child: SingleChildScrollView(
-                                        child: Column(
-                                          crossAxisAlignment:
-                                              CrossAxisAlignment.center,
-                                          children: [
-                                            _buildCurrentWeather(
-                                                currentWeatherData),
-                                            SizedBox(
-                                                height:
-                                                    93.0), //Space between current weather and tabs
-                                            // TabBar for "Today", "Hourly", and "Next 4 Days"
-                                            DefaultTabController(
-                                              length: 3,
-                                              child: Column(
-                                                children: [
-                                                  TabBar(
-                                                    labelColor:
-                                                        AppColors.getTextColor(
-                                                            _isDarkMode),
-                                                    unselectedLabelColor:
-                                                        Colors.grey,
-                                                    indicatorColor: Colors.red,
-                                                    dividerColor: Colors
-                                                        .transparent, // Customize tab indicator colorindicator color
-                                                    tabs: [
-                                                      Tab(text: "Today"),
-                                                      Tab(
-                                                          text:
-                                                              "Hourly Temperature"),
-                                                      Tab(text: "Next 4 Days"),
-                                                    ],
-                                                  ),
-                                                  SizedBox(
-                                                      height:
-                                                          10), // Space between tabs and content
-                                                  // TabBarView for displaying the respective content
-                                                  Container(
-                                                    height:
-                                                        160, // Set height for forecast content
-                                                    child: TabBarView(
-                                                      children: [
-                                                        _buildDailyForecast(
-                                                            forecastList,
-                                                            true), // Today forecast
-                                                        _buildHourlyForecast(
-                                                            forecastList), // Hourly forecast
-                                                        _buildDailyForecast(
-                                                            forecastList,
-                                                            false), // Next 4 days forecast
-                                                      ],
-                                                    ),
-                                                  ),
-                                                ],
-                                              ),
-                                            ),
-                                          ],
-                                        ),
-                                      ),
-                                    );
-                                  },
-                                )),
-                              // if (!_isLocationServiceEnabled &&
-                              //     isCurrentLocation)
-                              //   Padding(
-                              //     padding: const EdgeInsets.all(8.0),
-                              //     child: Text(
-                              //       'Location services are disabled. Tap here to enable.',
-                              //       style: TextStyle(color: Colors.red),
-                              //     ),
-                              //   ),
+                              Expanded(
+                                child: _isSearching
+                                    ? _buildSearchResults()
+                                    : _buildWeatherContent(),
+                              ),
                             ],
                           ),
           ),
         ),
+      ),
+    );
+  }
+
+  Widget _buildSearchResults() {
+    if (searchResults.isNotEmpty) {
+      return ListView.builder(
+        itemCount: searchResults.length,
+        itemBuilder: (context, index) {
+          final result = searchResults[index];
+          return ListTile(
+            title: _buildHighlightedText(
+                searchResults[index], _searchController.text),
+            onTap: () {
+              _selectCity(searchResults[index]);
+            },
+          );
+        },
+      );
+    } else if (searchHistory.isNotEmpty) {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Padding(
+            padding: const EdgeInsets.all(8.0),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                GestureDetector(
+                  onTap: _showAllHistoryDialog,
+                  child: Text('View All', style: TextStyle(color: Colors.blue)),
+                ),
+              ],
+            ),
+          ),
+          Expanded(
+            child: ListView.builder(
+              itemCount: searchHistory.length.clamp(0, 5),
+              itemBuilder: (context, index) {
+                return ListTile(
+                  title: Text(searchHistory[index]),
+                  onTap: () {
+                    _selectCity(searchHistory[index]);
+                  },
+                );
+              },
+            ),
+          ),
+        ],
+      );
+    } else {
+      return Container(); // Empty container if no search results or history
+    }
+  }
+
+  Widget _buildWeatherContent() {
+    return FutureBuilder<Map<String, dynamic>>(
+      future: weather,
+      builder: (context, snapshot) {
+        if (snapshot.connectionState == ConnectionState.waiting) {
+          return Center(child: CircularProgressIndicator());
+        }
+        if (snapshot.hasError) {
+          return Center(child: Text('Error: ${snapshot.error}'));
+        }
+        if (!snapshot.hasData) {
+          return Center(child: Text('No data available'));
+        }
+
+        final data = snapshot.data!;
+        final list = data['list'] as List;
+        final currentWeatherData = list.isNotEmpty ? list[0] : null;
+
+        if (currentWeatherData == null) {
+          return Center(child: Text('No weather data available'));
+        }
+
+        final forecastList = data['list'] as List<dynamic>? ?? [];
+        return Padding(
+          padding: const EdgeInsets.all(8.0),
+          child: SingleChildScrollView(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.center,
+              children: [
+                _buildCurrentWeather(currentWeatherData),
+                SizedBox(height: 93.0),
+                _buildForecastTabs(forecastList),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildForecastTabs(List<dynamic> forecastList) {
+    return DefaultTabController(
+      length: 3,
+      child: Column(
+        children: [
+          TabBar(
+            labelColor: AppColors.getTextColor(_isDarkMode),
+            unselectedLabelColor: Colors.grey,
+            indicatorColor: Colors.red,
+            dividerColor: Colors.transparent,
+            tabs: [
+              Tab(text: "Today"),
+              Tab(text: "Hourly Temperature"),
+              Tab(text: "Next 4 Days"),
+            ],
+          ),
+          SizedBox(height: 10),
+          Container(
+            height: 160,
+            child: TabBarView(
+              children: [
+                _buildDailyForecast(forecastList, true),
+                _buildHourlyForecast(forecastList),
+                _buildDailyForecast(forecastList, false),
+              ],
+            ),
+          ),
+        ],
       ),
     );
   }
