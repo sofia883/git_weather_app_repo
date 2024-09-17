@@ -11,11 +11,32 @@ import 'package:http/http.dart' as http;
 import 'dart:async';
 
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 void main() async {
-
-
+  WidgetsFlutterBinding.ensureInitialized();
+  await NotificationService.initialize();
   runApp(MyApp());
 }
+
 class MyApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
@@ -61,14 +82,14 @@ class _MainScreenState extends State<MainScreen> {
     // Add more screens as needed
   ];
 
-  @override   
+  @override
   Widget build(BuildContext context) {
     return Scaffold(
       body: IndexedStack(
         index: _selectedIndex,
         children: _screens,
       ),
-    bottomNavigationBar: BottomNavigationBar(
+      bottomNavigationBar: BottomNavigationBar(
         items: [
           BottomNavigationBarItem(
             icon: Icon(Icons.home),

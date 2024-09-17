@@ -157,6 +157,7 @@ class _PreferencesPageState extends State<PreferencesPage> {
     if (!_savedPreferences.contains(condition)) {
       setState(() {
         newPreference = condition;
+
         _savedPreferences.add(condition);
         _savePreferences();
       });
@@ -166,8 +167,7 @@ class _PreferencesPageState extends State<PreferencesPage> {
 
       if (notificationsEnabled) {
         _showSaveConfirmationSnackbar();
-        NotificationService.addNewAlert(condition);
-        
+        // NotificationService.addNewAlert(condition);
       } else {
         _showNotificationsDisabledSnackbar();
       }
@@ -217,7 +217,7 @@ class _PreferencesPageState extends State<PreferencesPage> {
     }
 
     // If permission is granted, check current weather
-    NotificationService.checkCurrentLocationWeather();
+    // NotificationService.checkCurrentLocationWeather();
   }
 
   Future<void> _loadSavedLocations() async {
