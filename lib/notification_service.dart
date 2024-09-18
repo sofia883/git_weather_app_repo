@@ -1,90 +1,149 @@
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
-import 'package:workmanager/workmanager.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:workmanager/workmanager.dart';
 import 'package:http/http.dart' as http;
 import 'dart:convert';
-import 'package:weather_app/api_key.dart';
+import 'package:geolocator/geolocator.dart';
 
 class NotificationService {
-  static final FlutterLocalNotificationsPlugin flutterLocalNotificationsPlugin =
-      FlutterLocalNotificationsPlugin();
+  static final FlutterLocalNotificationsPlugin
+      _flutterLocalNotificationsPlugin = FlutterLocalNotificationsPlugin();
 
   static Future<void> initialize() async {
-    final AndroidInitializationSettings initializationSettingsAndroid =
+    const AndroidInitializationSettings initializationSettingsAndroid =
         AndroidInitializationSettings('@mipmap/ic_launcher');
-    final InitializationSettings initializationSettings =
-        InitializationSettings(android: initializationSettingsAndroid);
-    await flutterLocalNotificationsPlugin.initialize(initializationSettings);
 
-    // Initialize Workmanager
-    Workmanager().initialize(callbackDispatcher);
-    Workmanager().registerPeriodicTask(
+    final InitializationSettings initializationSettings =
+        InitializationSettings(
+      android: initializationSettingsAndroid,
+    );
+
+    await _flutterLocalNotificationsPlugin.initialize(initializationSettings);
+
+    // Initialize Workmanager for background tasks
+    await Workmanager().initialize(callbackDispatcher);
+    await Workmanager().registerPeriodicTask(
       "weatherCheck",
-      "checkWeatherPeriodically",
-      frequency: Duration(seconds: 5),
+      "checkWeather",
+      frequency: Duration(minutes: 15),
+      constraints: Constraints(
+        networkType: NetworkType.connected,
+      ),
     );
   }
 
   static Future<void> showNotification({
+    required int id,
     required String title,
     required String body,
   }) async {
-    const AndroidNotificationDetails androidPlatformChannelSpecifics =
-        AndroidNotificationDetails(
-      'weather_channel',
-      'Weather Notifications',
-      importance: Importance.max,
-      priority: Priority.high,
-    );
-    const NotificationDetails platformChannelSpecifics =
-        NotificationDetails(android: androidPlatformChannelSpecifics);
-    await flutterLocalNotificationsPlugin.show(
-      0,
-      title,
-      body,
-      platformChannelSpecifics,
-    );
-  }
+    final prefs = await SharedPreferences.getInstance();
+    bool notificationsEnabled = prefs.getBool('notificationsEnabled') ?? true;
 
-  static Future<void> checkAndNotify(String newDescription) async {
-    SharedPreferences prefs = await SharedPreferences.getInstance();
-    List<String> selectedAlerts = prefs.getStringList('weatherAlerts') ?? [];
+    if (notificationsEnabled) {
+      const AndroidNotificationDetails androidPlatformChannelSpecifics =
+          AndroidNotificationDetails(
+        'weather_alerts',
+        'Weather Alerts',
+        channelDescription: 'Notifications for weather alerts',
+        importance: Importance.max,
+        priority: Priority.high,
+      );
 
-    if (selectedAlerts.contains(newDescription)) {
-      await showNotification(
-        title: 'Weather Alert',
-        body: 'Current weather condition: $newDescription',
+      const NotificationDetails platformChannelSpecifics =
+          NotificationDetails(android: androidPlatformChannelSpecifics);
+
+      await _flutterLocalNotificationsPlugin.show(
+        id,
+        title,
+        body,
+        platformChannelSpecifics,
       );
     }
   }
-}
 
-void callbackDispatcher() {
-  Workmanager().executeTask((task, inputData) async {
-    switch (task) {
-      case "checkWeatherPeriodically":
-        await _checkWeatherAndNotify();
-        break;
+  static Future<void> checkAndNotify(String currentWeather) async {
+    final prefs = await SharedPreferences.getInstance();
+    bool notificationsEnabled = prefs.getBool('notificationsEnabled') ?? true;
+
+    if (notificationsEnabled) {
+      List<String> savedAlerts = prefs.getStringList('savedAlerts') ?? [];
+      String? lastNotifiedWeather = prefs.getString('lastNotifiedWeather');
+
+      // Check if current weather matches any saved alert
+      if (savedAlerts.contains(currentWeather) &&
+          currentWeather != lastNotifiedWeather) {
+        await showNotification(
+          id: DateTime.now().millisecond,
+          title: 'Weather Alert',
+          body:
+              '"$currentWeather" detected in your area. Stay informed and take precautions!',
+        );
+        await prefs.setString('lastNotifiedWeather', currentWeather);
+      }
     }
-    return Future.value(true);
-  });
-}
-
-Future<void> _checkWeatherAndNotify() async {
-  SharedPreferences prefs = await SharedPreferences.getInstance();
-  double? lat = prefs.getDouble('lastKnownLatitude');
-  double? lon = prefs.getDouble('lastKnownLongitude');
-
-  if (lat == null || lon == null) {
-    return; // Can't check weather without location
   }
 
-  final response = await http.get(Uri.parse(
-      'https://api.openweathermap.org/data/2.5/weather?lat=$lat&lon=$lon&appid=$openWeatherAPIKey'));
+  static Future<void> addNewAlert(String newAlert) async {
+    final prefs = await SharedPreferences.getInstance();
+    List<String> savedAlerts = prefs.getStringList('savedAlerts') ?? [];
 
-  if (response.statusCode == 200) {
-    final weatherData = json.decode(response.body);
-    final newDescription = weatherData['weather'][0]['description'];
-    await NotificationService.checkAndNotify(newDescription);
+    if (!savedAlerts.contains(newAlert)) {
+      savedAlerts.add(newAlert);
+      await prefs.setStringList('savedAlerts', savedAlerts);
+
+      // Check if the new alert matches current weather
+      String currentWeather = await getCurrentWeatherDescription();
+      if (currentWeather == newAlert) {
+        await showNotification(
+          id: DateTime.now().millisecond,
+          title: 'New Weather Alert Match',
+          body:
+              'Your new alert "$newAlert" matches the current weather. Stay informed!',
+        );
+      }
+    }
+  }
+
+  static Future<String> getCurrentWeatherDescription() async {
+    Position position = await Geolocator.getCurrentPosition();
+    return await getCurrentWeather(position.latitude, position.longitude);
+  }
+
+  static Future<String> getCurrentWeather(double lat, double lon) async {
+    final apiKey = 'a99e2b4ee1217d2cafe222279d444d4c';
+    final url =
+        'https://api.openweathermap.org/data/2.5/weather?lat=$lat&lon=$lon&appid=$apiKey';
+
+    final response = await http.get(Uri.parse(url));
+    if (response.statusCode == 200) {
+      final data = json.decode(response.body);
+      return data['weather'][0]['description'];
+    } else {
+      throw Exception('Failed to load weather data');
+    }
+  }
+
+  static Future<void> manuallyTriggerCheck() async {
+    await checkAndNotify('clear sky');
+  }
+
+  static Future<void> checkCurrentLocationWeather() async {
+    // String currentWeather = await getCurrentWeatherDescription();
+    String currentWeather = 'clear sky';
+
+    await checkAndNotify(currentWeather);
+  }
+
+  @pragma('vm:entry-point')
+  static void callbackDispatcher() {
+    Workmanager().executeTask((task, inputData) async {
+      switch (task) {
+        case "checkWeather":
+          await checkCurrentLocationWeather();
+          break;
+      }
+      return Future.value(true);
+    });
   }
 }

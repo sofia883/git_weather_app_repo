@@ -91,7 +91,13 @@ class WeatherUtils extends StatelessWidget {
             leading: Icon(Icons.logout),
             title: Text('Logout'),
           ),
-        ),
+        ),PopupMenuItem<String>(
+  value: 'weather_alerts',
+  child: ListTile(
+    leading: Icon(Icons.notifications),
+    title: Text('Weather Alerts'),
+  ),
+),
       ],
     );
   }
