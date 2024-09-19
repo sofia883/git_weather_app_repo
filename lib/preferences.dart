@@ -85,6 +85,7 @@ class _PreferencesPageState extends State<PreferencesPage> {
   @override
   void initState() {
     super.initState();
+    print('saved${_savedPreferences}');
     _loadSavedPreferences();
     _loadSavedLocations();
     NotificationService.initialize();

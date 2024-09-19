@@ -61,7 +61,7 @@ class WeatherScreenState extends State<WeatherScreen> {
   double? lastKnownLongitude;
   StreamSubscription<ServiceStatus>? _locationServiceStatusSubscription;
   bool _lastRequestWasCurrentLocation = false;
-
+  String _lastSelectedLocation = '';
   @override
   @override
   void initState() {
@@ -81,7 +81,46 @@ class WeatherScreenState extends State<WeatherScreen> {
     super.dispose();
   }
 
-  String _lastSelectedLocation = '';
+  Future<String> getCurrentWeatherDescription() async {
+    try {
+      print("Fetching current location...");
+      Position position = await Geolocator.getCurrentPosition();
+
+      print(
+          "Current location: Latitude ${position.latitude}, Longitude ${position.longitude}");
+      return await getCurrentLocationWeather(
+          position.latitude, position.longitude);
+    } catch (e) {
+      print("Error getting current weather description: $e");
+      return 'Unable to fetch weather';
+    }
+  }
+
+  Future<String> getCurrentLocationWeather(double lat, double lon) async {
+    final apiKey = openWeatherAPIKey;
+    final url =
+        'https://api.openweathermap.org/data/2.5/weather?lat=$lat&lon=$lon&appid=$apiKey';
+
+    try {
+      print("Fetching weather data for lat: $lat, lon: $lon");
+      final response = await http.get(Uri.parse(url));
+
+      print("Response status: ${response.statusCode}");
+      if (response.statusCode == 200) {
+        final data = json.decode(response.body);
+        final weatherDescription = data['weather'][0]['description'];
+        print("Weather description: $weatherDescription");
+        return weatherDescription; // Using 'description' instead of 'main'
+      } else {
+        print(
+            "Failed to load weather data. Status code: ${response.statusCode}");
+        throw Exception('Failed to load weather data');
+      }
+    } catch (e) {
+      print("Error fetching weather data: $e");
+      return 'Unable to fetch weather';
+    }
+  }
 
   void _selectCity(String selectedCity) {
     setState(() {
@@ -333,27 +372,21 @@ class WeatherScreenState extends State<WeatherScreen> {
     }
   }
 
-  Future<String> getCurrentWeatherDescription() async {
-    Position position = await Geolocator.getCurrentPosition();
-    return await getCurrentLocationWeather(
-        position.latitude, position.longitude);
-  }
-
   // Fetch the weather description from the API
-  Future<String> getCurrentLocationWeather(double lat, double lon) async {
-    final apiKey = 'a99e2b4ee1217d2cafe222279d444d4c';
-    final url =
-        'https://api.openweathermap.org/data/2.5/weather?lat=$lat&lon=$lon&appid=$apiKey';
+  // Future<String> getCurrentLocationWeather(double lat, double lon) async {
+  //   final apiKey = 'a99e2b4ee1217d2cafe222279d444d4c';
+  //   final url =
+  //       'https://api.openweathermap.org/data/2.5/weather?lat=$lat&lon=$lon&appid=$apiKey';
 
-    final response = await http.get(Uri.parse(url));
-    if (response.statusCode == 200) {
-      final data = json.decode(response.body);
-      return data['weather'][0]
-          ['description']; // Return the weather description
-    } else {
-      throw Exception('Failed to load weather data');
-    }
-  }
+  //   final response = await http.get(Uri.parse(url));
+  //   if (response.statusCode == 200) {
+  //     final data = json.decode(response.body);
+  //     return data['weather'][0]
+  //         ['description']; // Return the weather description
+  //   } else {
+  //     throw Exception('Failed to load weather data');
+  //   }
+  // }
 
   void _showLocationServiceDisabledDialog() {
     showDialog(
@@ -1040,42 +1073,38 @@ class WeatherScreenState extends State<WeatherScreen> {
                 fontSize: 25, color: AppColors.getTextColor(_isDarkMode)),
           ),
         ),
-        Row(
-          children: [
-            SizedBox(
-              width: 82.0,
-            ),
-            Container(
-              height: 225,
-              child: RichText(
-                text: TextSpan(
-                  children: [
-                    TextSpan(
-                      text: '$currentTemp',
-                      style: GoogleFonts.acme(
+        SizedBox(
+          width: 82.0,
+        ),
+        Container(
+          height: 225,
+          child: RichText(
+            text: TextSpan(
+              children: [
+                TextSpan(
+                  text: '$currentTemp',
+                  style: GoogleFonts.acme(
+                    textStyle: TextStyle(
+                        fontSize: 200,
+                        color: AppColors.getTextColor(_isDarkMode)),
+                  ),
+                ),
+                WidgetSpan(
+                  child: Transform.translate(
+                    offset: Offset(-14, -90.0),
+                    child: Text(
+                      '°${_isCelsius ? 'C' : 'F'}',
+                      style: GoogleFonts.abel(
                         textStyle: TextStyle(
-                            fontSize: 200,
+                            fontSize: 50,
                             color: AppColors.getTextColor(_isDarkMode)),
                       ),
                     ),
-                    WidgetSpan(
-                      child: Transform.translate(
-                        offset: Offset(-14, -90.0),
-                        child: Text(
-                          '°${_isCelsius ? 'C' : 'F'}',
-                          style: GoogleFonts.abel(
-                            textStyle: TextStyle(
-                                fontSize: 50,
-                                color: AppColors.getTextColor(_isDarkMode)),
-                          ),
-                        ),
-                      ),
-                    ),
-                  ],
+                  ),
                 ),
-              ),
+              ],
             ),
-          ],
+          ),
         ),
         SizedBox(height: 14),
         // Use FutureBuilder to handle the async weather description fetching
