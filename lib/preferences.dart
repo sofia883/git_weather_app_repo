@@ -74,6 +74,7 @@ class _PreferencesPageState extends State<PreferencesPage> {
     'broken clouds',
     'overcast clouds'
   ];
+  
   String? _selectedCondition;
   String newPreference = '';
   List<String> _savedPreferences = [];

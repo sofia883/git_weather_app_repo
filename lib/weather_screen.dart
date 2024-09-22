@@ -23,14 +23,10 @@ import 'package:dio/dio.dart';
 
 class WeatherScreen extends StatefulWidget {
   final String? location;
-
   const WeatherScreen({
     Key? key,
     this.location,
   }) : super(key: key);
-
-  // const WeatherScreen({Key? key}) : super(key: key);
-
   @override
   State<WeatherScreen> createState() => WeatherScreenState();
 }
@@ -112,6 +108,7 @@ class WeatherScreenState extends State<WeatherScreen> {
       });
     }
   }
+
   void _selectCity(String selectedCity) {
     setState(() {
       cityName = selectedCity;
@@ -229,6 +226,7 @@ class WeatherScreenState extends State<WeatherScreen> {
       _hasNetworkError = connectivityResult == ConnectivityResult.none;
     });
   }
+
   void _showNetworkErrorDialog() {
     if (_hasNetworkError) {
       showDialog(
@@ -250,7 +248,7 @@ class WeatherScreenState extends State<WeatherScreen> {
               TextButton(
                 child: Text('Try Again'),
                 onPressed: () {
-                 Navigator.of(context).pop();
+                  Navigator.of(context).pop();
                   if (_lastSelectedLocation.isNotEmpty) {
                     _initializeWeatherForLocation(_lastSelectedLocation);
                   } else if (_lastAction == 'current_location') {
@@ -328,7 +326,7 @@ class WeatherScreenState extends State<WeatherScreen> {
   }
 
   Future<void> _handleCurrentLocationRequest() async {
-        setState(() {
+    setState(() {
       _lastAction = 'current_location';
       _lastSelectedLocation = '';
       isLoading = true;
@@ -402,29 +400,26 @@ class WeatherScreenState extends State<WeatherScreen> {
     }
   }
 
-  // Future<void> _checkConnectivity() async {
-  //   var connectivityResult = await (Connectivity().checkConnectivity());
-  //   if (connectivityResult == ConnectivityResult.none) {
-  //     print("No internet connection");
-  //     // Instead of throwing an exception, just log it
-  //     // We'll continue with the app initialization
-  //   }
-  // }
-
   Future<void> _fetchWeatherForCurrentLocation(double lat, double lon) async {
     try {
       final weatherData = await _fetchWeatherData('lat=$lat&lon=$lon');
-      setState(() {
+      setState(() async {
         weather = Future.value(weatherData);
         cityName =
             '${weatherData['city']['name']}, ${weatherData['city']['country']}';
         isCurrentLocation = true;
-        _currentDescription =
-            weatherData['list'][0]['weather'][0]['description'];
+        await WeatherService.getCurrentWeatherDescription();
+        String currentWeather =
+            await WeatherService.getCurrentWeatherDescription();
+        // This will update the saved weather description
+        _currentDescription = currentWeather;
+        // _currentDescription = WeatherService.getCurrentWeatherDescription();
       });
     } catch (e) {
       _handleError(e);
     }
+    print(
+        'current weather of wetehr screen${_currentDescription}');
   }
 
   Future<String> getCurrentWeatherDescription() async {
@@ -644,13 +639,13 @@ class WeatherScreenState extends State<WeatherScreen> {
           ),
           SizedBox(height: 20),
           ElevatedButton(
-            onPressed: () async{
-             await _checkConnectivity();
-                if (!_hasNetworkError) {
-                  _retryLastAction();
-                }
+            onPressed: () async {
+              await _checkConnectivity();
+              if (!_hasNetworkError) {
+                _retryLastAction();
+              }
             },
-            child: Text('Try Again'),
+            child: Text('Retry'),
           ),
         ],
       ),
@@ -865,7 +860,7 @@ class WeatherScreenState extends State<WeatherScreen> {
               children: [
                 TextSpan(text: 'Could not load result. '),
                 TextSpan(
-                  text: 'Try again',
+                  text: 'Retry',
                   style: TextStyle(
                     color: Colors.red,
                     fontWeight: FontWeight.bold,
@@ -901,23 +896,6 @@ class WeatherScreenState extends State<WeatherScreen> {
         ),
       ),
     );
-  }
-
-  void _handleNetworkError(dynamic error) {
-    setState(() {
-      _hasNetworkError = true;
-      _isSearching = false; // Ensure search bar is hidden
-      if (error is TimeoutException) {
-        errorMessage =
-            'Connection timed out. Please check your internet connection.';
-      } else if (error is SocketException) {
-        errorMessage =
-            'No internet connection. Please check your network settings.';
-      } else {
-        errorMessage = 'An error occurred. Please try again later.';
-      }
-    });
-    _showNetworkErrorDialog();
   }
 
   Future<void> _saveIsCurrentLocation(bool value) async {
@@ -1068,7 +1046,6 @@ class WeatherScreenState extends State<WeatherScreen> {
       // Add more customizations as needed
     );
   }
-
 
   void _handleMenuSelection(String value) {
     switch (value) {
@@ -1246,7 +1223,7 @@ class WeatherScreenState extends State<WeatherScreen> {
                       ),
                       SizedBox(height: 8),
                       Text(
-                        '${temp.round()}°',
+                        '°${_isCelsius ? 'C' : 'F'}',
                         style: TextStyle(
                           fontSize: 16,
                           fontWeight: FontWeight.bold,

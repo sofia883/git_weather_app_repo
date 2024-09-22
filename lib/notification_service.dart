@@ -94,7 +94,7 @@ class NotificationService {
     await WeatherService
         .getCurrentWeatherDescription(); // This will update the saved weather description
     String currentWeather = await WeatherService.getCurrentWeatherDescription();
-    print("Current weather: $currentWeather");
+    print("Current weather of notification service: $currentWeather");
     final prefs = await SharedPreferences.getInstance();
     bool notificationsEnabled = prefs.getBool('notificationsEnabled') ?? true;
 
@@ -141,25 +141,25 @@ class NotificationService {
     }
   }
 
-  static Future<String> getCurrentWeatherDescription() async {
-    Position position = await Geolocator.getCurrentPosition();
-    return await getCurrentWeather(position.latitude, position.longitude);
-  }
+  // static Future<String> getCurrentWeatherDescription() async {
+  //   Position position = await Geolocator.getCurrentPosition();
+  //   return await getCurrentWeather(position.latitude, position.longitude);
+  // }
 
-  static Future<String> getCurrentWeather(double lat, double lon) async {
-    final apiKey =
-        'a99e2b4ee1217d2cafe222279d444d4c'; // Replace with your OpenWeatherMap API key
-    final url =
-        'https://api.openweathermap.org/data/2.5/weather?lat=$lat&lon=$lon&appid=$apiKey';
+  // static Future<String> getCurrentWeather(double lat, double lon) async {
+  //   final apiKey =
+  //       'a99e2b4ee1217d2cafe222279d444d4c'; // Replace with your OpenWeatherMap API key
+  //   final url =
+  //       'https://api.openweathermap.org/data/2.5/weather?lat=$lat&lon=$lon&appid=$apiKey';
 
-    final response = await http.get(Uri.parse(url));
-    if (response.statusCode == 200) {
-      final data = json.decode(response.body);
-      return data['weather'][0]['description'];
-    } else {
-      throw Exception('Failed to load weather data');
-    }
-  }
+  //   final response = await http.get(Uri.parse(url));
+  //   if (response.statusCode == 200) {
+  //     final data = json.decode(response.body);
+  //     return data['weather'][0]['description'];
+  //   } else {
+  //     throw Exception('Failed to load weather data');
+  //   }
+  // }
 
   @pragma('vm:entry-point')
   static void callbackDispatcher() {
@@ -177,7 +177,7 @@ class NotificationService {
   static Future<void> addNewAlert(String newAlert) async {
     print('Add new alert ');
 
-    String currentWeather = await getCurrentWeatherDescription();
+    String currentWeather = await WeatherService.getCurrentWeatherDescription();
     print(currentWeather);
     if (currentWeather.toLowerCase() == newAlert.toLowerCase()) {
       await showNotification(
