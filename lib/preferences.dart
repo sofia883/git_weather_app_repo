@@ -85,7 +85,7 @@ class _PreferencesPageState extends State<PreferencesPage> {
   @override
   void initState() {
     super.initState();
-    print('saved${_savedPreferences}');
+
     _loadSavedPreferences();
     _loadSavedLocations();
     NotificationService.initialize();
@@ -229,9 +229,13 @@ class _PreferencesPageState extends State<PreferencesPage> {
 
   Future<void> _loadSavedPreferences() async {
     final prefs = await SharedPreferences.getInstance();
+    List<String> loadedPreferences =
+        prefs.getStringList('savedPreferences') ?? [];
     setState(() {
-      _savedPreferences = prefs.getStringList('savedPreferences') ?? [];
+      _savedPreferences = loadedPreferences;
     });
+    // Print all added preferences to the console
+    print('Loaded saved preferences: $_savedPreferences');
   }
 
   Future<void> _savePreferences() async {

@@ -4,37 +4,39 @@ import 'package:weather_app/welcome_page.dart';
 import 'package:weather_app/weather_screen.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:fl_chart/fl_chart.dart';
-import 'package:flutter_local_notifications/flutter_local_notifications.dart';
+
 import 'notification_service.dart';
 import 'dart:convert';
 import 'package:http/http.dart' as http;
 import 'dart:async';
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+import 'package:workmanager/workmanager.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  await NotificationService.initialize();
+  await Workmanager().initialize(callbackDispatcher, isInDebugMode: false);
+  await Workmanager().registerPeriodicTask(
+    "weatherCheck",
+    "checkWeather",
+    frequency: Duration(minutes: 15),
+    constraints: Constraints(
+      networkType: NetworkType.connected,
+    ),
+    existingWorkPolicy: ExistingWorkPolicy.replace,
+  );
   runApp(MyApp());
+}
+
+@pragma('vm:entry-point')
+void callbackDispatcher() {
+  Workmanager().executeTask((task, inputData) async {
+    print("Background task executed: $task");
+    switch (task) {
+      case "checkWeather":
+        await NotificationService.checkWeatherAndNotify();
+        break;
+    }
+    return Future.value(true);
+  });
 }
 
 class MyApp extends StatelessWidget {

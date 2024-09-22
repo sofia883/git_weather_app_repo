@@ -38,9 +38,7 @@ class NotificationService {
     await _flutterLocalNotificationsPlugin.initialize(
       initializationSettings,
       onDidReceiveNotificationResponse: (NotificationResponse response) {
-        if (response.actionId == 'cancel_action') {
-          cancelNotification(response.id!);
-        }
+        // Handle notification tap if necessary
       },
     );
 
@@ -48,7 +46,7 @@ class NotificationService {
     await Workmanager().registerPeriodicTask(
       "weatherCheck",
       "checkWeather",
-      frequency: Duration(minutes: 15),
+      frequency: Duration(minutes: 3),
       constraints: Constraints(
         networkType: NetworkType.connected,
       ),
@@ -72,14 +70,6 @@ class NotificationService {
         channelDescription: 'Notifications for weather alerts',
         importance: Importance.max,
         priority: Priority.high,
-        actions: <AndroidNotificationAction>[
-          AndroidNotificationAction(
-            'cancel_action',
-            'Cancel',
-            showsUserInterface: true,
-            cancelNotification: false,
-          ),
-        ],
       );
 
       const NotificationDetails platformChannelSpecifics =
@@ -101,18 +91,21 @@ class NotificationService {
 
   static Future<void> checkWeatherAndNotify() async {
     print("Checking weather and notifying...");
-    // final currentWeather = await getCurrentWeatherDescription();
-    final currentWeather = 'mist'; // Replace with actual weather fetching logic
+    await WeatherService
+        .getCurrentWeatherDescription(); // This will update the saved weather description
+    String currentWeather = await WeatherService.getCurrentWeatherDescription();
     print("Current weather: $currentWeather");
-
     final prefs = await SharedPreferences.getInstance();
     bool notificationsEnabled = prefs.getBool('notificationsEnabled') ?? true;
 
     if (notificationsEnabled) {
-      final savedAlerts = await getSavedAlerts();
+      final savedAlerts =
+          await _loadSavedPreferences(); // Now you can assign it
+      print("Saved alerts: $savedAlerts");
+
       String? lastNotifiedWeather = prefs.getString('lastNotifiedWeather');
 
-      print("Saved ffalerts: $savedAlerts");
+      print("Saved ffalerts: $_loadSavedPreferences()");
       print("Last notified weather: $lastNotifiedWeather");
 
       bool alertFound = savedAlerts
@@ -183,19 +176,7 @@ class NotificationService {
 
   static Future<void> addNewAlert(String newAlert) async {
     print('Add new alert ');
-    final prefs = await SharedPreferences.getInstance();
-    List<String> savedAlerts = prefs.getStringList('savedAlerts') ?? [];
 
-    // Case-insensitive check to see if the new alert already exists
-    // bool alertExists = savedAlerts
-    //     .any((alert) => alert.toLowerCase() == newAlert.toLowerCase());
-
-    // if (!alertExists) {
-    //   print('no exist');
-    //   savedAlerts.add(newAlert);
-    //   await prefs.setStringList('savedAlerts', savedAlerts);
-
-    // Check if the new alert matches current weather (case-insensitive)
     String currentWeather = await getCurrentWeatherDescription();
     print(currentWeather);
     if (currentWeather.toLowerCase() == newAlert.toLowerCase()) {
@@ -218,10 +199,30 @@ class NotificationService {
     await checkWeatherAndNotify();
   }
 
-  static Future<List<String>> getSavedAlerts() async {
+//  static Future<List<String>> getSavedAlerts() async {
+//   final prefs = await SharedPreferences.getInstance();
+//     List<String> loadedPreferences =
+//         prefs.getStringList('savedPreferences') ?? [];
+//     setState(() {
+//       _savedPreferences = loadedPreferences;
+//     });
+//     // Print all added preferences to the console
+//     print('Loaded saved preferences: $_savedPreferences');
+//   // final prefs = await SharedPreferences.getInstance();
+//   // return prefs.getStringList('savedAlerts') ?? [];
+// }
+  static Future<List<String>> _loadSavedPreferences() async {
     final prefs = await SharedPreferences.getInstance();
-    return prefs.getStringList('savedAlerts') ?? [];
+    List<String> loadedPreferences =
+        prefs.getStringList('savedPreferences') ?? [];
+
+    // Print all added preferences to the console
+    print('Loaded saved prdddeferences: $loadedPreferences');
+
+    return loadedPreferences;
   }
+
+// Usage
 
   static Future<void> checkCurrentLocationWeather() async {
     // String currentWeather = await getCurrentWeatherDescription();
@@ -232,24 +233,36 @@ class NotificationService {
 }
 
 class WeatherService {
-  static const String apiKey =
-      'a99e2b4ee1217d2cafe222279d444d4c'; // Replace with your OpenWeatherMap API key
-
-  static Future<Map<String, dynamic>> getCurrentWeather() async {
-    Position position = await Geolocator.getCurrentPosition();
-    return await getWeatherData(position.latitude, position.longitude);
+  static Future<String> getCurrentWeatherDescription() async {
+    try {
+      Position position = await Geolocator.getCurrentPosition(
+        desiredAccuracy: LocationAccuracy.high,
+      );
+      return await getWeatherDescriptionForLocation(
+          position.latitude, position.longitude);
+    } catch (e) {
+      print("Error getting current weather description: $e");
+      return 'Unable to fetch weather';
+    }
   }
 
-  static Future<Map<String, dynamic>> getWeatherData(
+  static Future<String> getWeatherDescriptionForLocation(
       double lat, double lon) async {
+    final apiKey = 'a99e2b4ee1217d2cafe222279d444d4c';
     final url =
         'https://api.openweathermap.org/data/2.5/weather?lat=$lat&lon=$lon&appid=$apiKey';
 
-    final response = await http.get(Uri.parse(url));
-    if (response.statusCode == 200) {
-      return json.decode(response.body);
-    } else {
-      throw Exception('Failed to load weather data');
+    try {
+      final response = await http.get(Uri.parse(url));
+      if (response.statusCode == 200) {
+        final data = json.decode(response.body);
+        return data['weather'][0]['description'];
+      } else {
+        throw Exception('Failed to load weather data');
+      }
+    } catch (e) {
+      print("Error fetching weather data: $e");
+      return 'Unable to fetch weather';
     }
   }
 }
