@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 // import 'package:weather_icons/weather_icons.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-// import 'methods.dart';
+import 'methods.dart';
 import 'weather_screen.dart';
 import 'notification_service.dart';
 import 'package:geolocator/geolocator.dart';
@@ -16,82 +16,111 @@ class PreferencesPage extends StatefulWidget {
 }
 
 class _PreferencesPageState extends State<PreferencesPage> {
-  List<String> _weatherConditions = [
-    'Thunderstorm with light rain',
-    'Thunderstorm with rain',
-    'Thunderstorm with heavy rain',
-    'Light thunderstorm',
-    'Thunderstorm',
-    'Heavy thunderstorm',
-    'Ragged thunderstorm',
-    'Thunderstorm with light drizzle',
-    'Thunderstorm with drizzle',
-    'Thunderstorm with heavy drizzle',
-    'Light intensity drizzle',
-    'Drizzle',
-    'Heavy intensity drizzle',
-    'Light intensity drizzle rain',
-    'Drizzle rain',
-    'Heavy intensity drizzle rain',
-    'Shower rain and drizzle',
-    'Heavy shower rain and drizzle',
-    'Shower drizzle',
-    'Light rain',
-    'Moderate rain',
-    'Heavy intensity rain',
-    'Very heavy rain',
-    'Extreme rain',
-    'hello',
-    'Freezing rain',
-    'Light intensity shower rain',
-    'Shower rain',
-    'Heavy intensity shower rain',
-    'Ragged shower rain',
-    'Light snow',
-    'Snow',
-    'Heavy snow',
-    'Sleet',
-    'Light shower sleet',
-    'Shower sleet',
-    'Light rain and snow',
-    'Rain and snow',
-    'Light shower snow',
-    'Shower snow',
-    'Heavy shower snow',
-    'Mist',
-    'Smoke',
-    'Haze',
-    'Sand/dust whirls',
-    'Fog',
-    'Sand',
-    'Dust',
-    'Volcanic ash',
-    'Squalls',
-    'Tornado',
-    'clear sky',
-    'few clouds',
-    'Scattered clouds (25-50%)',
-    'broken clouds',
-    'overcast clouds'
-  ];
-  
   String? _selectedCondition;
   String newPreference = '';
   List<String> _savedPreferences = [];
   bool _showAllSavedPreferences = false;
 
+  List<String> _savedNormalPreferences = [];
+  List<String> _savedSeverePreferences = [];
+
+  bool _severeWeatherEnabled = false;
   bool _showAllSavedLocations = false;
   List<String> _savedLocations = [];
   bool isCurrentLocation = false;
+
   @override
   void initState() {
     super.initState();
+    _loadSevereWeatherEnabled();
 
     _loadSavedPreferences();
     _loadSavedLocations();
     NotificationService.initialize();
-    _loadIsCurrentLocation(); // Initialize notification service
+    _loadIsCurrentLocation();
+    _loadSevereWeatherEnabled();
+// Initialize notification service
   }
+
+  Future<void> _loadSevereWeatherEnabled() async {
+    final prefs = await SharedPreferences.getInstance();
+    setState(() {
+      _severeWeatherEnabled = prefs.getBool('severeWeatherEnabled') ?? false;
+    });
+  }
+
+  Future<void> _loadSavedPreferences() async {
+    final prefs = await SharedPreferences.getInstance();
+    setState(() {
+      _savedNormalPreferences =
+          prefs.getStringList('savedNormalPreferences') ?? [];
+      _savedSeverePreferences =
+          prefs.getStringList('savedSeverePreferences') ?? [];
+    });
+  }
+
+  Future<void> _savePreferences() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setStringList(
+        'savedNormalPreferences', _savedNormalPreferences);
+    await prefs.setStringList(
+        'savedSeverePreferences', _savedSeverePreferences);
+  }
+
+  void _toggleSevereWeatherConditions(bool value) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool('severeWeatherEnabled', value);
+
+    setState(() {
+      _severeWeatherEnabled = value;
+      if (value) {
+        // Add all severe weather conditions to _savedPreferences
+        _savedPreferences.addAll(WeatherConstants.severeWeatherConditions
+            .where((condition) => !_savedPreferences.contains(condition)));
+      } else {
+        // Remove all severe weather conditions from _savedPreferences
+        _savedPreferences.removeWhere((condition) =>
+            WeatherConstants.severeWeatherConditions.contains(condition));
+      }
+    });
+
+    await _savePreferences();
+
+    // Update NotificationService with new preferences
+
+    if (value) {
+      _showSevereWeatherEnabledSnackbar();
+      NotificationService.notifySevereWeatherEnabled();
+    } else {
+      _showSevereWeatherDisabledSnackbar();
+    }
+  }
+
+  void _addPreference(String condition) async {
+    _handleLocationPermission();
+    if (!_savedPreferences.contains(condition)) {
+      setState(() {
+        newPreference = condition;
+        _savedPreferences.add(condition);
+        _savePreferences();
+      });
+
+      final prefs = await SharedPreferences.getInstance();
+      bool notificationsEnabled = prefs.getBool('notificationsEnabled') ?? true;
+
+      if (notificationsEnabled) {
+        _showSaveConfirmationSnackbar();
+        NotificationService.addNewAlert(condition);
+      } else {
+        _showNotificationsDisabledSnackbar();
+      }
+    } else {
+      _showDuplicatePreferenceSnackbar();
+    }
+  }
+  // ... (existing code)
+
+ 
 
   Future<void> _loadIsCurrentLocation() async {
     final prefs = await SharedPreferences.getInstance();
@@ -154,29 +183,6 @@ class _PreferencesPageState extends State<PreferencesPage> {
     );
   }
 
-  void _addPreference(String condition) async {
-    _handleLocationPermission();
-    if (!_savedPreferences.contains(condition)) {
-      setState(() {
-        newPreference = condition;
-        _savedPreferences.add(condition);
-        _savePreferences();
-      });
-
-      final prefs = await SharedPreferences.getInstance();
-      bool notificationsEnabled = prefs.getBool('notificationsEnabled') ?? true;
-
-      if (notificationsEnabled) {
-        _showSaveConfirmationSnackbar();
-        NotificationService.addNewAlert(condition);
-      } else {
-        _showNotificationsDisabledSnackbar();
-      }
-    } else {
-      _showDuplicatePreferenceSnackbar();
-    }
-  }
-
   void _showNotificationsDisabledSnackbar() {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
@@ -228,22 +234,6 @@ class _PreferencesPageState extends State<PreferencesPage> {
     });
   }
 
-  Future<void> _loadSavedPreferences() async {
-    final prefs = await SharedPreferences.getInstance();
-    List<String> loadedPreferences =
-        prefs.getStringList('savedPreferences') ?? [];
-    setState(() {
-      _savedPreferences = loadedPreferences;
-    });
-    // Print all added preferences to the console
-    print('Loaded saved preferences: $_savedPreferences');
-  }
-
-  Future<void> _savePreferences() async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setStringList('savedPreferences', _savedPreferences);
-  }
-
   Future<void> _saveLocations() async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setStringList('savedLocations', _savedLocations);
@@ -293,6 +283,31 @@ class _PreferencesPageState extends State<PreferencesPage> {
                   iconColor: Colors.black,
                   shadowColor: Colors.white,
                 ),
+              ),
+              Text(
+                'Severe Weather Alerts:',
+                style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+              ),
+              SwitchListTile(
+                title: Text('Enable all severe weather alerts'),
+                value: _severeWeatherEnabled,
+                onChanged: _toggleSevereWeatherConditions,
+                activeColor: Colors.orange,
+                activeTrackColor: Colors.orangeAccent,
+                inactiveThumbColor: Colors.grey,
+                inactiveTrackColor: Colors.grey[300],
+                thumbColor: MaterialStateProperty.resolveWith<Color>(
+                    (Set<MaterialState> states) {
+                  if (states.contains(MaterialState.disabled)) {
+                    return Colors.grey.withOpacity(.48);
+                  }
+                  if (states.contains(MaterialState.selected)) {
+                    return Colors.orange;
+                  }
+                  return Colors.grey;
+                }),
+                trackOutlineColor:
+                    MaterialStateProperty.all(Colors.transparent),
               ),
             ],
           ),
@@ -399,23 +414,6 @@ class _PreferencesPageState extends State<PreferencesPage> {
     );
   }
 
-  // Widget _buildPreferenceTile(String condition) {
-  //   return Container(
-  //     margin: const EdgeInsets.only(bottom: 8.0),
-  //     decoration: BoxDecoration(
-  //       color: Colors.black,
-  //       borderRadius: BorderRadius.circular(8.0),
-  //     ),
-  //     child: ListTile(
-  //       title: Text(condition, style: TextStyle(color: Colors.white)),
-  //       trailing: IconButton(
-  //         icon: Icon(Icons.delete, color: Colors.white),
-  //         onPressed: () => _confirmRemovePreference(condition),
-  //       ),
-  //     ),
-  //   );
-  // }
-
   Widget _buildWeatherAlertDropdown() {
     return Container(
       width: 260,
@@ -436,7 +434,7 @@ class _PreferencesPageState extends State<PreferencesPage> {
               });
             }
           },
-          items: _weatherConditions.map((condition) {
+          items: WeatherConstants.weatherConditions.map((condition) {
             bool isSaved = _savedPreferences.contains(condition);
             return DropdownMenuItem<String>(
               value: condition,
@@ -457,7 +455,8 @@ class _PreferencesPageState extends State<PreferencesPage> {
             );
           }).toList(),
           selectedItemBuilder: (BuildContext context) {
-            return _weatherConditions.map<Widget>((String item) {
+            return WeatherConstants.weatherConditions
+                .map<Widget>((String item) {
               return Text(item);
             }).toList();
           },
@@ -560,6 +559,24 @@ class _PreferencesPageState extends State<PreferencesPage> {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
           content: Text('Location removed!'), duration: Duration(seconds: 2)),
+    );
+  }
+
+  void _showSevereWeatherEnabledSnackbar() {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text('Severe weather alerts enabled'),
+        duration: Duration(seconds: 2),
+      ),
+    );
+  }
+
+  void _showSevereWeatherDisabledSnackbar() {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text('Severe weather alerts disabled'),
+        duration: Duration(seconds: 2),
+      ),
     );
   }
 }

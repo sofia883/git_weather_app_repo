@@ -20,6 +20,7 @@ import 'package:app_settings/app_settings.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:flutter/gestures.dart'; // Import this for TapGestureRecognizer
 import 'package:dio/dio.dart';
+import 'dart:ui';
 
 class WeatherScreen extends StatefulWidget {
   final String? location;
@@ -403,23 +404,20 @@ class WeatherScreenState extends State<WeatherScreen> {
   Future<void> _fetchWeatherForCurrentLocation(double lat, double lon) async {
     try {
       final weatherData = await _fetchWeatherData('lat=$lat&lon=$lon');
-      setState(() async {
+      String currentWeather =
+          await WeatherService.getCurrentWeatherDescription();
+
+      setState(() {
         weather = Future.value(weatherData);
         cityName =
             '${weatherData['city']['name']}, ${weatherData['city']['country']}';
         isCurrentLocation = true;
-        await WeatherService.getCurrentWeatherDescription();
-        String currentWeather =
-            await WeatherService.getCurrentWeatherDescription();
-        // This will update the saved weather description
         _currentDescription = currentWeather;
-        // _currentDescription = WeatherService.getCurrentWeatherDescription();
+        print('current description of weatherscreen${_currentDescription}');
       });
     } catch (e) {
       _handleError(e);
     }
-    print(
-        'current weather of wetehr screen${_currentDescription}');
   }
 
   Future<String> getCurrentWeatherDescription() async {
@@ -1096,8 +1094,10 @@ class WeatherScreenState extends State<WeatherScreen> {
   Widget _buildCurrentWeather(Map<String, dynamic> currentWeatherData) {
     final tempK = currentWeatherData['main']['temp']?.toDouble() ?? 0.0;
     final currentTemp = convertTemperature(tempK, _isCelsius).round();
-    _currentDescription =
-        currentWeatherData['weather'][0]['description'] ?? 'Unknown';
+
+    String weatherDescription = isCurrentLocation
+        ? _currentDescription
+        : currentWeatherData['weather'][0]['description'] ?? 'Unknown';
 
     print('Current weather description: $_currentDescription');
     print('Is current location: $isCurrentLocation');
@@ -1153,7 +1153,7 @@ class WeatherScreenState extends State<WeatherScreen> {
         SizedBox(height: 14),
         // Use FutureBuilder to handle the async weather description fetching
         Text(
-          _currentDescription,
+          weatherDescription,
           style: GoogleFonts.abel(
             textStyle: TextStyle(
                 fontSize: 45, color: AppColors.getTextColor(_isDarkMode)),
@@ -1171,9 +1171,7 @@ class WeatherScreenState extends State<WeatherScreen> {
     );
   }
 
-  Widget _buildHourlyForecast(List<dynamic> list) {
-    final now = DateTime.now();
-
+  Widget buildHourlyForecast(List<dynamic> list) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -1181,59 +1179,100 @@ class WeatherScreenState extends State<WeatherScreen> {
           padding: const EdgeInsets.symmetric(vertical: 6.0),
           child: Container(
             height: 120,
-            child: ListView.builder(
-              scrollDirection: Axis.horizontal,
-              itemCount: min(24, list.length), // Increased to show 24 hours
-              itemBuilder: (context, index) {
-                final hourlyWeather = list[index];
-                final temp = convertTemperature(
-                    hourlyWeather['main']['temp'], _isCelsius);
-                final forecastTime = DateTime.fromMillisecondsSinceEpoch(
-                    hourlyWeather['dt'] * 1000);
-                final weatherIcon = WeatherUtils.getWeatherIcon(
-                    hourlyWeather['weather'][0]['main']);
-
-                // Check if current time is within this hour
-                final isCurrentHour = now.isAfter(forecastTime) &&
-                    now.isBefore(forecastTime.add(Duration(hours: 3)));
-
-                // Determine text color based on whether it's the current hour
-                final textColor = isCurrentHour
-                    ? Colors.red
-                    : (_isDarkMode ? Colors.white : Colors.black);
-
-                // Use device's locale to determine 12/24 hour format
-                final is24HourFormat =
-                    MediaQuery.of(context).alwaysUse24HourFormat;
-                final timeFormat = is24HourFormat ? 'HH:mm' : 'h:mm a';
-
-                return Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 12.0),
-                  child: Column(
-                    children: [
-                      Text(
-                        DateFormat(timeFormat).format(forecastTime),
-                        style: TextStyle(fontSize: 14, color: textColor),
-                      ),
-                      SizedBox(height: 8),
-                      BoxedIcon(
-                        weatherIcon,
-                        size: 30,
-                        color: textColor,
-                      ),
-                      SizedBox(height: 8),
-                      Text(
-                        '°${_isCelsius ? 'C' : 'F'}',
-                        style: TextStyle(
-                          fontSize: 16,
-                          fontWeight: FontWeight.bold,
-                          color: textColor,
+            child: Stack(
+              children: [
+                ListView.builder(
+                  scrollDirection: Axis.horizontal,
+                  itemCount: min(9,
+                      list.length), // Increased to 9 to include the blur effect
+                  itemBuilder: (context, index) {
+                    if (index == 8) {
+                      // Last item, create a blurred effect
+                      return Opacity(
+                        opacity: 0.5,
+                        child: ClipRect(
+                          child: BackdropFilter(
+                            filter: ImageFilter.blur(sigmaX: 5.0, sigmaY: 5.0),
+                            child: Container(
+                              width: 80,
+                              color: Colors.transparent,
+                            ),
+                          ),
                         ),
+                      );
+                    }
+
+                    final hourlyWeather = list[index];
+                    final temp = convertTemperature(
+                        hourlyWeather['main']['temp'], _isCelsius);
+
+                    final time = DateTime.fromMillisecondsSinceEpoch(
+                            hourlyWeather['dt'] * 1000,
+                            isUtc: true)
+                        .toLocal();
+
+                    final weatherIcon = WeatherUtils.getWeatherIcon(
+                        hourlyWeather['weather'][0]['main']);
+
+                    final now = DateTime.now();
+                    final isCurrentInterval = time.isBefore(now) &&
+                        now.isBefore(time.add(Duration(hours: 3)));
+
+                    return Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 12.0),
+                      child: Column(
+                        children: [
+                          Text(
+                            isCurrentInterval
+                                ? 'Now'
+                                : DateFormat('h a').format(time),
+                            style: TextStyle(
+                              fontSize: 14,
+                              color: isCurrentInterval ? Colors.red : null,
+                              fontWeight:
+                                  isCurrentInterval ? FontWeight.bold : null,
+                            ),
+                          ),
+                          SizedBox(height: 8),
+                          BoxedIcon(
+                            weatherIcon,
+                            size: 30,
+                            color: _isDarkMode ? Colors.white : Colors.black,
+                          ),
+                          SizedBox(height: 8),
+                          Text(
+                            '${temp.round()}°',
+                            style: TextStyle(
+                              fontSize: 16,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                        ],
                       ),
-                    ],
+                    );
+                  },
+                ),
+                Positioned(
+                  right: 0,
+                  top: 0,
+                  bottom: 0,
+                  child: Container(
+                    width: 40,
+                    decoration: BoxDecoration(
+                      gradient: LinearGradient(
+                        begin: Alignment.centerLeft,
+                        end: Alignment.centerRight,
+                        colors: [
+                          _isDarkMode
+                              ? Colors.black.withOpacity(0)
+                              : Colors.white.withOpacity(0),
+                          _isDarkMode ? Colors.black : Colors.white,
+                        ],
+                      ),
+                    ),
                   ),
-                );
-              },
+                ),
+              ],
             ),
           ),
         )
@@ -1241,7 +1280,7 @@ class WeatherScreenState extends State<WeatherScreen> {
     );
   }
 
-  Widget _buildDailyForecast(List forecastList, bool highlightToday) {
+  Widget _buildDailyForecast(List forecastList, bool showToday) {
     final now = DateTime.now();
 
     return SingleChildScrollView(
@@ -1251,13 +1290,12 @@ class WeatherScreenState extends State<WeatherScreen> {
         children: List.generate(
           min(7, (forecastList.length / 8).floor()),
           (index) {
-            final int calculatedIndex = index * 8;
+            final int calculatedIndex = showToday ? index * 8 : (index + 1) * 8;
             if (calculatedIndex >= forecastList.length) {
               return Container();
             }
 
             final futureWeather = forecastList[calculatedIndex];
-            // Convert the temperature to double before passing it to convertTemperature
             final temp = convertTemperature(
                     (futureWeather['main']['temp'] as num).toDouble(),
                     _isCelsius)
@@ -1265,10 +1303,17 @@ class WeatherScreenState extends State<WeatherScreen> {
             final date =
                 DateTime.fromMillisecondsSinceEpoch(futureWeather['dt'] * 1000);
 
-            // Check if this forecast is for today
             final isToday = date.year == now.year &&
                 date.month == now.month &&
                 date.day == now.day;
+
+            // Skip today if showToday is false
+            if (!showToday && isToday) {
+              return Container();
+            }
+
+            // Determine if this is the first item when showToday is false
+            final isFirstItemWhenNotShowingToday = !showToday && index == 0;
 
             return Padding(
               padding: const EdgeInsets.all(22.0),
@@ -1278,28 +1323,37 @@ class WeatherScreenState extends State<WeatherScreen> {
                     WeatherUtils.getWeatherIcon(
                         futureWeather['weather'][0]['main']),
                     size: 30,
-                    color: isToday && highlightToday
+                    color: isToday && showToday
                         ? Colors.red
                         : AppColors.getTextColor(_isDarkMode),
                   ),
                   Text(
-                    '$temp°',
+                    '$temp°${_isCelsius ? 'C' : 'F'}',
                     style: GoogleFonts.berkshireSwash(
                       textStyle: TextStyle(
                         fontSize: 20,
-                        color: isToday && highlightToday
+                        color: isToday && showToday
                             ? Colors.red
                             : AppColors.getTextColor(_isDarkMode),
                       ),
                     ),
                   ),
                   Text(
-                    isToday ? 'Today' : DateFormat('E').format(date),
+                    isToday
+                        ? 'Today'
+                        : (isFirstItemWhenNotShowingToday
+                            ? 'Tomorrow'
+                            : DateFormat('E').format(date)),
                     style: TextStyle(
                       fontSize: 14,
-                      color: isToday && highlightToday
+                      fontWeight: isToday && showToday
+                          ? FontWeight.bold
+                          : FontWeight.normal,
+                      color: isToday && showToday
                           ? Colors.red
-                          : AppColors.getTextColor(_isDarkMode),
+                          : (isFirstItemWhenNotShowingToday
+                              ? Colors.red // Set "Tomorrow" text color to red
+                              : AppColors.getTextColor(_isDarkMode)),
                     ),
                   ),
                 ],
@@ -1329,32 +1383,18 @@ class WeatherScreenState extends State<WeatherScreen> {
                         ? _buildLocationPermissionDeniedWidget()
                         : Column(
                             children: [
-                              IconButton(
-                                icon:
-                                    Icon(Icons.refresh), // Icon to be displayed
-                                color: Colors.blue, // Color of the icon
-                                iconSize: 40.0, // Size of the icon
-                                onPressed: () {
-                                  if (_lastSelectedLocation.isNotEmpty) {
-                                    _initializeWeatherForLocation(
-                                        _lastSelectedLocation);
-                                  } else {
-                                    _initializeApp();
-                                  }
-                                },
-                              ),
-                              ElevatedButton(
-                                onPressed: () async {
-                                  await NotificationService
-                                      .manuallyTriggerCheck();
-                                  ScaffoldMessenger.of(context).showSnackBar(
-                                    SnackBar(
-                                        content: Text(
-                                            'Notification check triggered')),
-                                  );
-                                },
-                                child: Text('Check for Weather Alerts'),
-                              ),
+                              // ElevatedButton(
+                              //   onPressed: () async {
+                              //     await NotificationService
+                              //         .manuallyTriggerCheck();
+                              //     ScaffoldMessenger.of(context).showSnackBar(
+                              //       SnackBar(
+                              //           content: Text(
+                              //               'Notification check triggered')),
+                              //     );
+                              //   },
+                              //   child: Text('Check for Weather Alerts'),
+                              // ),
                               _isSearching
                                   ? Padding(
                                       padding: const EdgeInsets.all(6.0),
@@ -1398,6 +1438,8 @@ class WeatherScreenState extends State<WeatherScreen> {
                                       ),
                                     )
                                   : Row(
+                                      mainAxisAlignment:
+                                          MainAxisAlignment.spaceBetween,
                                       children: [
                                         Padding(
                                           padding: const EdgeInsets.only(
@@ -1409,84 +1451,23 @@ class WeatherScreenState extends State<WeatherScreen> {
                                                 _handleLocationSelected,
                                           ),
                                         ),
-                                        Spacer(), // Pushes the theme toggle container to the right
-                                        Padding(
-                                          padding: const EdgeInsets.only(
-                                              top: 5.0, right: 8.0),
-                                          child: Container(
-                                            width: 30, // Adjust width as needed
-                                            height:
-                                                60, // Adjust height as needed
-                                            decoration: BoxDecoration(
-                                              boxShadow: [
-                                                BoxShadow(
-                                                  color: _isDarkMode
-                                                      ? Colors.grey
-                                                          .withOpacity(0.2)
-                                                      : Colors.black
-                                                          .withOpacity(0.2),
-                                                  spreadRadius: 5,
-                                                  blurRadius: 7,
-                                                  offset: Offset(0, 7),
-                                                ),
-                                              ],
-                                              color: _isDarkMode
-                                                  ? Colors.white
-                                                  : Colors.black,
-                                              border: Border.all(
-                                                color: _isDarkMode
-                                                    ? Colors.black
-                                                    : Colors.white,
-                                                width: 2.0,
-                                              ),
-                                              borderRadius:
-                                                  BorderRadius.circular(25),
-                                            ),
-                                            child: Column(
-                                              mainAxisAlignment:
-                                                  MainAxisAlignment.spaceEvenly,
-                                              children: [
-                                                GestureDetector(
-                                                  onTap: _isDarkMode
-                                                      ? _toggleTheme
-                                                      : null,
-                                                  child: AnimatedOpacity(
-                                                    opacity:
-                                                        _isDarkMode ? 1.0 : 0.3,
-                                                    duration: Duration(
-                                                        milliseconds: 200),
-                                                    child: Icon(
-                                                      Icons.sunny,
-                                                      color: Colors.orange,
-                                                      size: 20,
-                                                    ),
-                                                  ),
-                                                ),
-                                                GestureDetector(
-                                                  onTap: _isDarkMode
-                                                      ? null
-                                                      : _toggleTheme,
-                                                  child: AnimatedOpacity(
-                                                    opacity:
-                                                        _isDarkMode ? 0.3 : 1.0,
-                                                    duration: Duration(
-                                                        milliseconds: 200),
-                                                    child: Icon(
-                                                      Icons.dark_mode,
-                                                      color:
-                                                          const Color.fromARGB(
-                                                              255,
-                                                              105,
-                                                              106,
-                                                              107),
-                                                      size: 20,
-                                                    ),
-                                                  ),
-                                                ),
-                                              ],
-                                            ),
-                                          ),
+                                        IconButton(
+                                          icon: Icon(Icons
+                                              .refresh), // Icon to be displayed
+                                          color:
+                                              Colors.blue, // Color of the icon
+                                          iconSize: 40.0, // Size of the icon
+                                          onPressed: () {
+                                            if (_lastSelectedLocation
+                                                .isNotEmpty) {
+                                              _initializeWeatherForLocation(
+                                                  _lastSelectedLocation);
+                                            } else {
+                                              _initializeApp();
+                                            }
+                                          },
                                         ),
+                                        Spacer(), // Pushes the theme toggle container to the right
                                       ],
                                     ),
                               Expanded(
@@ -1615,7 +1596,7 @@ class WeatherScreenState extends State<WeatherScreen> {
             child: TabBarView(
               children: [
                 _buildDailyForecast(forecastList, true),
-                _buildHourlyForecast(forecastList),
+                buildHourlyForecast(forecastList),
                 _buildDailyForecast(forecastList, false),
               ],
             ),
@@ -1632,7 +1613,7 @@ class WeatherScreenState extends State<WeatherScreen> {
 class AppColors {
   static Color getbgColor(bool isDarkMode) {
     return isDarkMode
-        ? Color.fromARGB(255, 25, 25, 26)
+        ? Color.fromARGB(255, 53, 53, 74)
         : const Color.fromARGB(255, 221, 217, 217);
   }
 

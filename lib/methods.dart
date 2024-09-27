@@ -23,7 +23,7 @@ class WeatherUtils extends StatelessWidget {
   Widget build(BuildContext context) {
     return PopupMenuButton<String>(
       icon: Icon(
-        Icons.more_vert,
+        Icons.menu,
         color: isDarkMode ? Colors.white : Colors.black,
       ),
       onSelected: (value) {
@@ -91,13 +91,14 @@ class WeatherUtils extends StatelessWidget {
             leading: Icon(Icons.logout),
             title: Text('Logout'),
           ),
-        ),PopupMenuItem<String>(
-  value: 'weather_alerts',
-  child: ListTile(
-    leading: Icon(Icons.notifications),
-    title: Text('Weather Alerts'),
-  ),
-),
+        ),
+        PopupMenuItem<String>(
+          value: 'weather_alerts',
+          child: ListTile(
+            leading: Icon(Icons.notifications),
+            title: Text('Weather Alerts'),
+          ),
+        ),
       ],
     );
   }
@@ -339,7 +340,7 @@ class NetworkHelper {
         debugPrint('NetworkHelper: No connectivity');
         return false;
       }
-      
+
       // Double-check internet connectivity
       bool result = await InternetConnectionChecker().hasConnection;
       debugPrint('NetworkHelper: Internet available: $result');
@@ -349,4 +350,83 @@ class NetworkHelper {
       return false;
     }
   }
+} // weather_constants.dart
+
+class WeatherConstants {
+  static const List<String> severeWeatherConditions = [
+    'Thunderstorm with heavy rain',
+    'Heavy thunderstorm',
+    'Ragged thunderstorm',
+    'Heavy intensity drizzle',
+    'Heavy intensity drizzle rain',
+    'Heavy shower rain and drizzle',
+    'Heavy intensity rain',
+    'Very heavy rain',
+    'Extreme rain',
+    'Heavy intensity shower rain',
+    'Heavy snow',
+    'Heavy shower snow',
+    'Tornado'
+        'clear sky',
+    'overcast clouds'
+        'drizzle',
+    'mist'
+  ];
+  static List<String> weatherConditions = [
+    'Thunderstorm with light rain',
+    'Thunderstorm with rain',
+    'Thunderstorm with heavy rain',
+    'Light thunderstorm',
+    'Thunderstorm',
+    'Heavy thunderstorm',
+    'Ragged thunderstorm',
+    'Thunderstorm with light drizzle',
+    'Thunderstorm with drizzle',
+    'Thunderstorm with heavy drizzle',
+    'Light intensity drizzle',
+    'Drizzle',
+    'Heavy intensity drizzle',
+    'Light intensity drizzle rain',
+    'Drizzle rain',
+    'Heavy intensity drizzle rain',
+    'Shower rain and drizzle',
+    'Heavy shower rain and drizzle',
+    'Shower drizzle',
+    'Light rain',
+    'Moderate rain',
+    'Heavy intensity rain',
+    'Very heavy rain',
+    'Extreme rain',
+    'Freezing rain',
+    'Light intensity shower rain',
+    'Shower rain',
+    'Heavy intensity shower rain',
+    'Ragged shower rain',
+    'Light snow',
+    'Snow',
+    'Heavy snow',
+    'Sleet',
+    'Light shower sleet',
+    'Shower sleet',
+    'Light rain and snow',
+    'Rain and snow',
+    'Light shower snow',
+    'Shower snow',
+    'Heavy shower snow',
+    'Mist',
+    'Smoke',
+    'Haze',
+    'Sand/dust whirls',
+    'Fog',
+    'Sand',
+    'Dust',
+    'Volcanic ash',
+    'Squalls',
+    'Tornado',
+    'Clear sky',
+    'Few clouds',
+    'Scattered clouds',
+    'Broken clouds',
+    'Overcast clouds'
+  ];
 }

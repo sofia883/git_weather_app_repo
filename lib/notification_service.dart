@@ -1,5 +1,6 @@
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:weather_app/methods.dart';
 import 'package:workmanager/workmanager.dart';
 import 'package:http/http.dart' as http;
 import 'dart:convert';
@@ -12,7 +13,9 @@ import 'package:http/http.dart' as http;
 import 'dart:convert';
 import 'package:geolocator/geolocator.dart';
 import 'dart:async';
+import 'package:logger/logger.dart';
 
+var logger = Logger();
 @pragma('vm:entry-point')
 void callbackDispatcher() {
   Workmanager().executeTask((task, inputData) async {
@@ -42,7 +45,7 @@ class NotificationService {
       },
     );
 
-    await Workmanager().initialize(callbackDispatcher, isInDebugMode: true);
+    await Workmanager().initialize(callbackDispatcher, isInDebugMode: false);
     await Workmanager().registerPeriodicTask(
       "weatherCheck",
       "checkWeather",
@@ -85,6 +88,16 @@ class NotificationService {
     }
   }
 
+  static Future<void> notifySevereWeatherEnabled() async {
+    await showNotification(
+      id: DateTime.now().millisecond,
+      title: 'Severe Weather Alerts Enabled',
+      body:
+          'You will be notified when severe weather conditions occur in your area.',
+    );
+    checkWeatherAndNotify();
+  }
+
   static Future<void> cancelNotification(int id) async {
     await _flutterLocalNotificationsPlugin.cancel(id);
   }
@@ -93,19 +106,22 @@ class NotificationService {
     print("Checking weather and notifying...");
     await WeatherService
         .getCurrentWeatherDescription(); // This will update the saved weather description
-    String currentWeather = await WeatherService.getCurrentWeatherDescription();
+    // String currentWeather = await WeatherService.getCurrentWeatherDescription();
+    String currentWeather = 'drizzle';
+
     print("Current weather of notification service: $currentWeather");
     final prefs = await SharedPreferences.getInstance();
     bool notificationsEnabled = prefs.getBool('notificationsEnabled') ?? true;
-
+    bool severeWeatherEnabled = prefs.getBool('severeWeatherEnabled') ?? false;
+    print(severeWeatherEnabled);
     if (notificationsEnabled) {
       final savedAlerts =
           await _loadSavedPreferences(); // Now you can assign it
-      print("Saved alerts: $savedAlerts");
+      logger.i("Saved alerts: $savedAlerts");
 
       String? lastNotifiedWeather = prefs.getString('lastNotifiedWeather');
-
-      print("Saved ffalerts: $_loadSavedPreferences()");
+      logger.i("Debug message");
+      logger.i("Saved ffalerts: $_loadSavedPreferences()");
       print("Last notified weather: $lastNotifiedWeather");
 
       bool alertFound = savedAlerts
@@ -113,7 +129,13 @@ class NotificationService {
       print("Alert found: $alertFound");
 
       if (alertFound &&
-          currentWeather.toLowerCase() != lastNotifiedWeather?.toLowerCase()) {
+              currentWeather.toLowerCase() !=
+                  lastNotifiedWeather?.toLowerCase() ||
+          severeWeatherEnabled &&
+              WeatherConstants.severeWeatherConditions.any((alert) =>
+                  alert.toLowerCase() == currentWeather.toLowerCase()) &&
+              currentWeather.toLowerCase() !=
+                  lastNotifiedWeather?.toLowerCase()) {
         // Show notification for matching weather condition
         await showNotification(
           id: DateTime.now().millisecond,
@@ -126,40 +148,11 @@ class NotificationService {
         // Update lastNotifiedWeather with the current weather
         await prefs.setString('lastNotifiedWeather', currentWeather);
         print("Updated last notified weather to: $currentWeather");
-      } else {
-        // Show update notification for non-matching condition
-        await showNotification(
-          id: DateTime.now().millisecond,
-          title: 'Weather Update',
-          body:
-              'No matching weather conditions in the last 15 minutes. Current weather: $currentWeather',
-        );
-        print("Notification sent for no matching condition");
       }
     } else {
-      print("Notifications are disabled");
+      print("Notifications are disabled or no matched");
     }
   }
-
-  // static Future<String> getCurrentWeatherDescription() async {
-  //   Position position = await Geolocator.getCurrentPosition();
-  //   return await getCurrentWeather(position.latitude, position.longitude);
-  // }
-
-  // static Future<String> getCurrentWeather(double lat, double lon) async {
-  //   final apiKey =
-  //       'a99e2b4ee1217d2cafe222279d444d4c'; // Replace with your OpenWeatherMap API key
-  //   final url =
-  //       'https://api.openweathermap.org/data/2.5/weather?lat=$lat&lon=$lon&appid=$apiKey';
-
-  //   final response = await http.get(Uri.parse(url));
-  //   if (response.statusCode == 200) {
-  //     final data = json.decode(response.body);
-  //     return data['weather'][0]['description'];
-  //   } else {
-  //     throw Exception('Failed to load weather data');
-  //   }
-  // }
 
   @pragma('vm:entry-point')
   static void callbackDispatcher() {
@@ -179,20 +172,7 @@ class NotificationService {
 
     String currentWeather = await WeatherService.getCurrentWeatherDescription();
     print(currentWeather);
-    if (currentWeather.toLowerCase() == newAlert.toLowerCase()) {
-      await showNotification(
-        id: DateTime.now().millisecond,
-        title: 'New Weather Alert Match',
-        body:
-            'Your new alert "$newAlert" matches the current weather. Stay informed!',
-      );
-    } else {
-      await showNotification(
-        id: DateTime.now().millisecond,
-        title: 'Weather Notification',
-        body: "You'll be notified when ${newAlert} occurs in your area",
-      );
-    }
+    checkWeatherAndNotify();
   }
 
   static Future<void> manuallyTriggerCheck() async {
